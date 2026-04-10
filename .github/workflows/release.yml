@@ -114,6 +114,7 @@ jobs:
             cartomancer-core
             cartomancer-graph
             cartomancer-github
+            cartomancer-store
             cartomancer
           )
           for crate in "${crates[@]}"; do

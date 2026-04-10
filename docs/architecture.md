@@ -5,23 +5,32 @@
 ```
 cartomancer scan <path>                        Local scan, no GitHub
 cartomancer review <owner/repo> <pr>           One-shot PR review via CLI
+cartomancer history [--branch <name>]          Browse past scan results
+cartomancer findings [<scan-id>] [filters]     Browse/search findings
+cartomancer dismiss <scan-id> <index>          Dismiss a false positive
+cartomancer dismissed                          List dismissed findings
+cartomancer undismiss <dismissal-id>           Remove a dismissal
 cartomancer serve                              Webhook server (not yet implemented)
 ```
 
 ## Pipeline Stages
 
 ```
-1. Prepare       Clone repo or reuse --work-dir
-2. Fetch Meta    GitHub API → PrMetadata (head SHA, base SHA)
-3. Fetch Diff    GitHub API → raw unified diff → PullRequestDiff
-4. Semgrep Scan  subprocess --baseline-commit → Vec<Finding>
-5. Graph Enrich  cartog impact/refs → GraphContext per finding
-6. Escalate      blast radius + domain → adjusted Severity
-7. LLM Deepen    Ollama or Anthropic → analysis text (conditional)
-8. Post          GitHub API → PR review (inline comments + summary)
+ 1. Prepare       Clone repo or reuse --work-dir
+ 2. Fetch Meta    GitHub API → PrMetadata (head SHA, base SHA)
+ 3. Fetch Diff    GitHub API → raw unified diff → PullRequestDiff
+ 4. Semgrep Scan  subprocess --baseline-commit → Vec<Finding>
+ 5. Graph Enrich  cartog impact/refs → GraphContext per finding
+ 6. Escalate      blast radius + domain → adjusted Severity
+ 7. LLM Deepen    Ollama or Anthropic → analysis text (conditional)
+ 8. Regression    Compare fingerprints against base branch baseline → new/existing
+ 9. Dismiss       Filter out dismissed findings by fingerprint match
+10. Persist       Write scan record + findings to SQLite (best-effort)
+11. Post          GitHub API → PR review (inline comments + summary)
 ```
 
 Stages 4-7 are shared between `scan` and `review` commands.
+Stages 8-9 are review-only. Stage 10 runs for both scan and review.
 
 ## Data Flow
 
@@ -52,6 +61,14 @@ Vec<Finding> (with llm_analysis text)
   │
   ▼ Build ReviewResult + format comments
 ReviewResult { findings, summary, head_sha }
+  │
+  ▼ annotate_regression(base_branch baseline fingerprints)
+Vec<Finding> (each annotated is_new: true/false)
+  │
+  ▼ filter_dismissed(dismissed fingerprints from store)
+Vec<Finding> (dismissed findings removed)
+  │
+  ▼ persist_scan() → SQLite .cartomancer.db (best-effort, never blocks)
   │
   ├─▶ --dry-run? → output JSON/text to stdout, skip posting
   │
@@ -148,9 +165,13 @@ CLI ──parse args──▶ cmd_review()
                       ├─▶ LlmProvider.deepen() (conditional)
                       │       └── POST /api/chat or /v1/messages
                       │
-                      └─▶ PipelineResult { review, diff, temp_dir }
+                      └─▶ PipelineResult { review, diff, branch, base_branch, temp_dir }
                       │
                    cmd_review() continues:
+                      │
+                      ├─▶ annotate_regression(base_branch → baseline fingerprints)
+                      ├─▶ filter_dismissed(dismissed fingerprints)
+                      ├─▶ persist_scan(scan record + findings → SQLite)
                       │
                       ├─▶ --dry-run? → print ReviewResult, exit
                       │
@@ -181,12 +202,27 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 | `format_summary(findings, duration, rules)` | Severity breakdown, top escalated findings, scan metadata |
 | `format_clean_summary(duration, rules)` | "No findings detected" with scan metadata |
 
+## Finding Persistence
+
+Scan and review results are persisted to a SQLite database (`.cartomancer.db` by default, configurable via `storage.db_path` in `.cartomancer.toml`).
+
+**Schema** (3 tables): `scans` (scan metadata), `findings` (per-finding data with fingerprint), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
+
+**Fingerprint**: SHA-256 of `rule_id:file_path:snippet_content`. Stable across scans — used for regression detection and dismissal matching. Line numbers excluded because they shift with unrelated edits.
+
+**Regression detection**: During `review`, each finding's fingerprint is compared against the latest scan on the base branch. Findings present in the baseline are marked `is_new: false`; new findings are marked `is_new: true`.
+
+**Dismissal**: Dismissed findings are suppressed by fingerprint match. If the code at a dismissed location changes (different snippet), the fingerprint changes and the finding reappears.
+
+**Best-effort**: All persistence operations are non-blocking. If the DB is unavailable, the pipeline continues and logs a warning (BR-3).
+
 ## Concurrency Model
 
 - **tokio** async runtime for GitHub API calls and LLM calls
 - **Subprocess** for Semgrep (tokio::process::Command)
 - **Sync** git clone/checkout (std::process::Command, blocking)
 - **Sync** cartog Database access (rusqlite is not Send; access from a single task)
+- **Sync** Store access (rusqlite, runs once after pipeline completes)
 - Findings enrichment runs sequentially per finding (cartog DB is single-connection)
 
 ## Error Handling Strategy
@@ -195,6 +231,7 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 - **Pipeline-level errors**: fail before posting (clone, semgrep, GitHub API)
 - **LLM errors**: logged and skipped (review still posts without LLM analysis)
 - **Temp dir cleanup**: always cleaned up, even on failure (via TempDir Drop)
+- **Store errors**: logged and skipped — persistence never blocks the pipeline (BR-3)
 
 ## Future Extensions
 
@@ -203,5 +240,6 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 - Custom rule YAML alongside Semgrep
 - GitLab / Bitbucket support
 - Slack/Teams notifications for Critical findings
-- Dashboard with historical trends
+- Dashboard / web UI for trend visualization over stored scan history
+- Retention policies (pruning old scans)
 - Feedback loop: learn from dismissed findings

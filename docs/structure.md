@@ -42,13 +42,20 @@ cartomancer/
 │   │       ├── diff.rs                # parse_diff(), is_line_in_diff()
 │   │       ├── types.rs               # PrMetadata, ReviewComment, API request types
 │   │       └── webhook.rs
+│   ├── cartomancer-store/              # SQLite persistence
+│   │   └── src/
+│   │       ├── lib.rs
+│   │       ├── schema.rs              # DDL, versioned migrations (PRAGMA user_version)
+│   │       ├── fingerprint.rs         # SHA-256 finding identity (rule_id:file:snippet)
+│   │       ├── store.rs               # Store: scan/finding CRUD, dismissals, baselines
+│   │       └── types.rs               # ScanRecord, StoredFinding, Dismissal, filters
 │   └── cartomancer-server/             # binary: pipeline + CLI
 │       ├── src/
-│       │   ├── main.rs                # entry point: cmd_scan, cmd_review
-│       │   ├── cli.rs                 # clap: scan, review (--work-dir, --dry-run), serve
+│       │   ├── main.rs                # entry point: cmd_scan, cmd_review, cmd_history, cmd_findings, cmd_dismiss
+│       │   ├── cli.rs                 # clap: scan, review, history, findings, dismiss, dismissed, undismiss, serve
 │       │   ├── comment.rs             # format_inline_comment, format_summary
 │       │   ├── config.rs
-│       │   ├── pipeline.rs            # run_pipeline: clone → scan → enrich → post
+│       │   ├── pipeline.rs            # run_pipeline, persist_scan, annotate_regression, filter_dismissed
 │       │   ├── semgrep.rs
 │       │   ├── webhook.rs
 │       │   └── llm/
@@ -65,10 +72,11 @@ cartomancer/
 
 | Crate | Type | Role | Key types |
 |-------|------|------|-----------|
-| `cartomancer-core` | lib | Pure domain model, no I/O | `Finding`, `GraphContext`, `Severity`, `AppConfig`, `LlmBackend`, `ReviewResult` |
+| `cartomancer-core` | lib | Pure domain model, no I/O | `Finding`, `GraphContext`, `Severity`, `AppConfig`, `StorageConfig`, `LlmBackend`, `ReviewResult` |
 | `cartomancer-graph` | lib | cartog integration + severity escalation | `CartogEnricher`, `SeverityEscalator` |
 | `cartomancer-github` | lib | GitHub REST API client + diff parser | `GitHubClient`, `PrMetadata`, `ReviewComment`, `parse_diff()`, `is_line_in_diff()` |
-| `cartomancer-server` | bin | Pipeline orchestration, CLI, webhook | `Cli`, `LlmProvider`, `run_pipeline()`, `run_semgrep()`, `format_inline_comment()` |
+| `cartomancer-store` | lib | SQLite persistence for scan results | `Store`, `ScanRecord`, `StoredFinding`, `Dismissal`, `compute()`, `snippet_hash()` |
+| `cartomancer-server` | bin | Pipeline orchestration, CLI, webhook | `Cli`, `LlmProvider`, `run_pipeline()`, `persist_scan()`, `annotate_regression()`, `filter_dismissed()` |
 
 ## Dependency Graph
 
@@ -78,18 +86,21 @@ cartomancer-server
 ├── cartomancer-graph
 │   ├── cartomancer-core
 │   └── cartog (external)
-└── cartomancer-github
-    └── cartomancer-core
+├── cartomancer-github
+│   └── cartomancer-core
+└── cartomancer-store
+    ├── cartomancer-core
+    └── rusqlite
 ```
 
 ## Module Boundaries in cartomancer-server
 
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
-| `cli` | Clap argument parsing (scan, review, serve) | - |
+| `cli` | Clap argument parsing (scan, review, history, findings, dismiss, dismissed, undismiss, serve) | - |
 | `comment` | Format inline comments + summary for GitHub | cartomancer-core::finding |
 | `config` | TOML config loading | cartomancer-core::config |
-| `pipeline` | Review orchestration: clone → scan → enrich → build ReviewResult | all other modules |
+| `pipeline` | Review orchestration + persistence + regression + dismissal filtering | all other modules, cartomancer-store |
 | `semgrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
 | `llm/` | Provider trait + Ollama + Anthropic | cartomancer-core::finding |
 | `webhook` | Axum HTTP handler | pipeline, cartomancer-github |

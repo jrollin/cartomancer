@@ -24,7 +24,8 @@ cargo fmt --check                # format check
 cartomancer-server (binary)
 ├── cartomancer-core     — pure domain types (Finding, Severity, config)
 ├── cartomancer-graph    — cartog enricher + severity escalator
-└── cartomancer-github   — GitHub API client + webhook types
+├── cartomancer-github   — GitHub API client + webhook types
+└── cartomancer-store    — SQLite persistence (scans, findings, dismissals)
 ```
 
 ## Key Types
@@ -34,19 +35,27 @@ cartomancer-server (binary)
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
 - `AppConfig` (core::config) — deserialized from `.cartomancer.toml`
+- `StorageConfig` (core::config) — `db_path` for finding persistence
 - `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
 - `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations
 - `PrMetadata` (github::types) — PR head/base SHA, refs, title from GitHub API
 - `ReviewComment` (github::types) — inline comment for PR Review API
 - `CartogEnricher` (graph::enricher) — wraps cartog::db::Database
 - `SeverityEscalator` (graph::escalator) — blast radius + domain → severity upgrade
-- `PipelineResult` (server::pipeline) — ReviewResult + parsed diff + temp dir handle
+- `Store` (store::store) — SQLite persistence: scan/finding CRUD, dismissals, baselines
+- `ScanRecord` / `StoredFinding` / `Dismissal` (store::types) — persistence DTOs
+- `PipelineResult` (server::pipeline) — ReviewResult + parsed diff + branch info + temp dir handle
 
 ## CLI Commands
 
 ```
 cartomancer scan <path> [--format text|json]
 cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--format text|json]
+cartomancer history [--branch <name>] [--format text|json]
+cartomancer findings [<scan-id>] [--rule <pat>] [--severity <lvl>] [--file <pat>] [--branch <name>] [--format text|json]
+cartomancer dismiss <scan-id> <finding-index> [--reason <text>]
+cartomancer dismissed [--format text|json]
+cartomancer undismiss <dismissal-id>
 cartomancer serve [--port <n>]                    # not yet implemented
 ```
 
@@ -60,9 +69,12 @@ cartomancer serve [--port <n>]                    # not yet implemented
 6. Enrich with cartog (impact, refs, callers, domain detection)
 7. Escalate severity (blast radius thresholds + domain tags)
 8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3)
-9. Post review (inline comments on diff lines, off-diff as regular comments)
+9. Regression check (compare fingerprints against base branch baseline)
+10. Dismiss filter (remove dismissed findings by fingerprint)
+11. Persist scan (write to `.cartomancer.db`, best-effort)
+12. Post review (inline comments on diff lines, off-diff as regular comments)
 
-`--dry-run` skips step 9, outputs ReviewResult to stdout.
+`--dry-run` skips step 12, outputs ReviewResult to stdout.
 
 ## External Dependencies
 

@@ -25,12 +25,14 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 - **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius
 - **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production)
 - **GitHub PR comments**: inline comments with blast radius context + summary comment
+- **Finding persistence**: SQLite storage of scan results, regression detection (new vs. existing findings), and false positive dismissal
 
 ## Pipeline
 
 ```
 GitHub webhook → fetch diff → semgrep scan → cartog enrich
-  → escalate severity → LLM deepen (conditional) → post comments
+  → escalate severity → LLM deepen (conditional)
+  → regression check → dismiss filter → post comments + persist
 ```
 
 ## Positioning
@@ -50,3 +52,4 @@ Cartomancer is not a replacement for any of these. It adds blast-radius-aware se
 - Not a code formatter or style enforcer
 - Not a full SAST platform (no taint analysis in v1)
 - Not a dashboard or metrics tool (v1 is CLI + webhook only)
+- Not a retention/pruning system — all scan history is stored indefinitely

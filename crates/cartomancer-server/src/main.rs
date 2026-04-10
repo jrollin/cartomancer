@@ -54,6 +54,22 @@ async fn main() -> Result<()> {
             dry_run,
             format,
         } => cmd_review(&repo, pr, work_dir.as_deref(), dry_run, &format, &config).await,
+        Command::History { branch, format } => cmd_history(branch.as_deref(), &format, &config),
+        Command::Findings {
+            scan_id,
+            rule,
+            severity,
+            file,
+            branch,
+            format,
+        } => cmd_findings(scan_id, rule, severity, file, branch, &format, &config),
+        Command::Dismiss {
+            scan_id,
+            finding_index,
+            reason,
+        } => cmd_dismiss(scan_id, finding_index, reason, &config),
+        Command::Dismissed { format } => cmd_dismissed(&format, &config),
+        Command::Undismiss { dismissal_id } => cmd_undismiss(dismissal_id, &config),
     }
 }
 
@@ -190,6 +206,26 @@ async fn cmd_scan(
             elapsed_ms = semgrep_elapsed.as_millis() as u64,
             "scan complete, no findings"
         );
+
+        // Persist even empty scans (AC-1.1)
+        let review_for_persist = cartomancer_core::review::ReviewResult {
+            pr_number: 0,
+            repo_full_name: git_repo_name(&target).unwrap_or_default(),
+            head_sha: git_head_sha(&target).unwrap_or_default(),
+            findings: vec![],
+            summary: "0 findings".into(),
+            status: cartomancer_core::review::ReviewStatus::Completed,
+        };
+        pipeline::persist_scan(
+            &config.storage.db_path,
+            &review_for_persist.repo_full_name,
+            &git_branch(&target).unwrap_or_else(|| "unknown".into()),
+            &review_for_persist.head_sha,
+            "scan",
+            None,
+            &review_for_persist,
+        );
+
         println!("No findings from semgrep.");
         return Ok(());
     }
@@ -364,6 +400,223 @@ async fn cmd_scan(
         "scan complete"
     );
 
+    Ok(())
+}
+
+fn cmd_history(
+    branch: Option<&str>,
+    format: &OutputFormat,
+    config: &cartomancer_core::config::AppConfig,
+) -> Result<()> {
+    let store = match cartomancer_store::store::Store::open(&config.storage.db_path) {
+        Ok(s) => s,
+        Err(_) => {
+            println!("No scan history found.");
+            return Ok(());
+        }
+    };
+
+    let filter = cartomancer_store::types::ScanFilter {
+        branch: branch.map(|s| s.to_string()),
+        ..Default::default()
+    };
+    let scans = store.list_scans(&filter)?;
+
+    if scans.is_empty() {
+        println!("No scan history found.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&scans)?);
+        }
+        OutputFormat::Text => {
+            println!(
+                "{:<6} {:<20} {:<20} {:<10} {:<8} Command",
+                "ID", "Timestamp", "Branch", "SHA", "Count"
+            );
+            let sep = "-".repeat(80);
+            println!("{sep}");
+            for scan in &scans {
+                let sha_short = if scan.commit_sha.len() > 7 {
+                    &scan.commit_sha[..7]
+                } else {
+                    &scan.commit_sha
+                };
+                println!(
+                    "{:<6} {:<20} {:<20} {:<10} {:<8} {}",
+                    scan.id.unwrap_or(0),
+                    scan.created_at.as_deref().unwrap_or("-"),
+                    scan.branch,
+                    sha_short,
+                    scan.finding_count,
+                    scan.command,
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_findings(
+    scan_id: Option<i64>,
+    rule: Option<String>,
+    severity: Option<String>,
+    file: Option<String>,
+    branch: Option<String>,
+    format: &OutputFormat,
+    config: &cartomancer_core::config::AppConfig,
+) -> Result<()> {
+    let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
+
+    let findings = if let Some(id) = scan_id {
+        let results = store.get_findings(id)?;
+        if results.is_empty() {
+            anyhow::bail!(
+                "No findings found for scan ID {id}. Check the ID with `cartomancer history`."
+            );
+        }
+        results
+    } else {
+        let filter = cartomancer_store::types::FindingFilter {
+            rule,
+            severity,
+            file,
+            branch,
+        };
+        store.search_findings(&filter)?
+    };
+
+    if findings.is_empty() {
+        println!("No findings match the given filters.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&findings)?);
+        }
+        OutputFormat::Text => {
+            for (i, f) in findings.iter().enumerate() {
+                println!(
+                    "{}. [{}] {} ({}:{})",
+                    i + 1,
+                    f.severity.to_uppercase(),
+                    f.rule_id,
+                    f.file_path,
+                    f.start_line,
+                );
+                println!(
+                    "   Scan: {} | Fingerprint: {}…",
+                    f.scan_id,
+                    &f.fingerprint[..12]
+                );
+                println!("   {}", f.message);
+                if !f.snippet.is_empty() {
+                    println!("   > {}", f.snippet.trim());
+                }
+                if let Some(ref cwe) = f.cwe {
+                    println!("   CWE: {cwe}");
+                }
+                if let Some(ref analysis) = f.llm_analysis {
+                    println!("   Analysis: {}", analysis.trim());
+                }
+                println!();
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_dismiss(
+    scan_id: i64,
+    finding_index: usize,
+    reason: Option<String>,
+    config: &cartomancer_core::config::AppConfig,
+) -> Result<()> {
+    let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
+    let findings = store.get_findings(scan_id)?;
+
+    if findings.is_empty() {
+        anyhow::bail!("No findings found for scan ID {scan_id}.");
+    }
+    if finding_index == 0 || finding_index > findings.len() {
+        anyhow::bail!(
+            "Finding index {finding_index} out of range. Valid range: 1..{}",
+            findings.len()
+        );
+    }
+
+    let f = &findings[finding_index - 1];
+    let dismissal = cartomancer_store::types::Dismissal {
+        id: None,
+        fingerprint: f.fingerprint.clone(),
+        rule_id: f.rule_id.clone(),
+        file_path: f.file_path.clone(),
+        start_line: f.start_line,
+        end_line: f.end_line,
+        snippet_hash: cartomancer_store::fingerprint::snippet_hash(&f.snippet),
+        reason,
+        created_at: None,
+    };
+
+    let id = store.dismiss(&dismissal)?;
+    println!(
+        "Dismissed finding #{finding_index} (rule: {}, file: {}). Dismissal ID: {id}",
+        f.rule_id, f.file_path
+    );
+
+    Ok(())
+}
+
+fn cmd_dismissed(
+    format: &OutputFormat,
+    config: &cartomancer_core::config::AppConfig,
+) -> Result<()> {
+    let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
+    let dismissals = store.list_dismissals()?;
+
+    if dismissals.is_empty() {
+        println!("No dismissed findings.");
+        return Ok(());
+    }
+
+    match format {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&dismissals)?);
+        }
+        OutputFormat::Text => {
+            println!(
+                "{:<6} {:<30} {:<30} {:<20} Reason",
+                "ID", "Rule", "File", "Dismissed At"
+            );
+            let sep = "-".repeat(100);
+            println!("{sep}");
+            for d in &dismissals {
+                println!(
+                    "{:<6} {:<30} {:<30} {:<20} {}",
+                    d.id.unwrap_or(0),
+                    &d.rule_id,
+                    &d.file_path,
+                    d.created_at.as_deref().unwrap_or("-"),
+                    d.reason.as_deref().unwrap_or("-"),
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn cmd_undismiss(dismissal_id: i64, config: &cartomancer_core::config::AppConfig) -> Result<()> {
+    let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
+    store
+        .undismiss(dismissal_id)
+        .map_err(|_| anyhow::anyhow!("Dismissal ID {dismissal_id} not found."))?;
+    println!("Dismissal {dismissal_id} removed.");
     Ok(())
 }
 
