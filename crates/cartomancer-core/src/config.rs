@@ -15,6 +15,8 @@ pub struct AppConfig {
     pub llm: LlmConfig,
     #[serde(default)]
     pub severity: SeverityConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -155,6 +157,25 @@ impl Default for SeverityConfig {
     }
 }
 
+/// Storage configuration for finding persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageConfig {
+    #[serde(default = "default_db_path")]
+    pub db_path: String,
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            db_path: default_db_path(),
+        }
+    }
+}
+
+fn default_db_path() -> String {
+    ".cartomancer.db".into()
+}
+
 fn default_blast_threshold() -> u32 {
     5
 }
@@ -193,6 +214,7 @@ mod tests {
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
         assert_eq!(config.llm.max_concurrent_deepening, 4);
+        assert_eq!(config.storage.db_path, ".cartomancer.db");
     }
 
     #[test]
@@ -238,5 +260,22 @@ provider = "ollama"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.llm.max_concurrent_deepening, 4);
+    }
+
+    #[test]
+    fn storage_db_path_defaults() {
+        let toml_str = "[semgrep]\nrules = [\"auto\"]\n";
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.storage.db_path, ".cartomancer.db");
+    }
+
+    #[test]
+    fn storage_db_path_overridable() {
+        let toml_str = r#"
+[storage]
+db_path = "/tmp/custom.db"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.storage.db_path, "/tmp/custom.db");
     }
 }

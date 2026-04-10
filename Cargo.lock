@@ -427,6 +427,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "cartomancer-store"
+version = "0.3.2"
+dependencies = [
+ "cartomancer-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
