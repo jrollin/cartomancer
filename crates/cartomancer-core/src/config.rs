@@ -46,6 +46,9 @@ pub struct SemgrepConfig {
     /// Glob patterns passed as `--exclude` to semgrep (e.g. `.github/`, `config/database.yml`).
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Number of parallel jobs (`-j`). When `None`, semgrep auto-detects from CPU count.
+    #[serde(default)]
+    pub jobs: Option<u32>,
 }
 
 impl Default for SemgrepConfig {
@@ -54,6 +57,7 @@ impl Default for SemgrepConfig {
             rules: default_semgrep_rules(),
             timeout_seconds: default_timeout(),
             exclude: Vec::new(),
+            jobs: None,
         }
     }
 }
@@ -175,6 +179,7 @@ mod tests {
         assert_eq!(config.semgrep.rules, vec!["auto"]);
         assert_eq!(config.semgrep.timeout_seconds, 120);
         assert!(config.semgrep.exclude.is_empty());
+        assert!(config.semgrep.jobs.is_none());
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
@@ -189,16 +194,18 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_semgrep_exclude() {
+    fn deserialize_semgrep_exclude_and_jobs() {
         let toml_str = r#"
 [semgrep]
 rules = ["auto"]
-exclude = [".github/", "config/database.yml", "etc/absences/"]
+exclude = [".github/", "config/database.yml"]
+jobs = 4
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
             config.semgrep.exclude,
-            vec![".github/", "config/database.yml", "etc/absences/"]
+            vec![".github/", "config/database.yml"]
         );
+        assert_eq!(config.semgrep.jobs, Some(4));
     }
 }

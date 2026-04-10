@@ -5,6 +5,7 @@
 rules = ["auto"]
 timeout_seconds = 120
 # exclude = [".github/", "config/database.yml", "etc/absences/"]
+# jobs = 4  # optional, defaults to semgrep auto-detection (~num CPUs)
 
 [llm]
 provider = "ollama"

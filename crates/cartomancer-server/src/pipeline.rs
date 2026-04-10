@@ -74,14 +74,8 @@ pub async fn run_pipeline(
 
     // 4. Run semgrep with --baseline-commit
     let semgrep_start = Instant::now();
-    let mut findings = semgrep::run_semgrep(
-        &work_str,
-        &config.semgrep.rules,
-        Some(&pr_meta.base_sha),
-        config.semgrep.timeout_seconds,
-        &config.semgrep.exclude,
-    )
-    .await?;
+    let mut findings =
+        semgrep::run_semgrep(&work_str, &config.semgrep, Some(&pr_meta.base_sha)).await?;
     let semgrep_elapsed = semgrep_start.elapsed();
     let rule_count = config.semgrep.rules.len();
     info!(

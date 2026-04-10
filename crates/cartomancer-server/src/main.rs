@@ -161,14 +161,7 @@ async fn cmd_scan(
 
     // 1. Run semgrep
     let semgrep_start = Instant::now();
-    let mut findings = semgrep::run_semgrep(
-        &target_str,
-        &config.semgrep.rules,
-        None,
-        config.semgrep.timeout_seconds,
-        &config.semgrep.exclude,
-    )
-    .await?;
+    let mut findings = semgrep::run_semgrep(&target_str, &config.semgrep, None).await?;
     let semgrep_elapsed = semgrep_start.elapsed();
 
     if findings.is_empty() {

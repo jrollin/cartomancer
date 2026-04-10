@@ -6,6 +6,7 @@ use anyhow::{Context, Result};
 use tokio::process::Command;
 use tracing::{debug, info, warn};
 
+use cartomancer_core::config::SemgrepConfig;
 use cartomancer_core::finding::Finding;
 use cartomancer_core::severity::Severity;
 
@@ -60,25 +61,27 @@ struct SemgrepError {
 /// Extracted for testability — the returned command is ready to spawn.
 fn build_command(
     target_dir: &str,
-    rules: &[String],
+    config: &SemgrepConfig,
     baseline_commit: Option<&str>,
-    timeout_seconds: u64,
-    exclude: &[String],
 ) -> Command {
     let mut cmd = Command::new("semgrep");
     cmd.arg("scan")
         .arg("--json")
         .arg("--quiet")
         .arg("--timeout")
-        .arg(timeout_seconds.to_string())
+        .arg(config.timeout_seconds.to_string())
         .current_dir(target_dir);
 
-    for rule in rules {
+    for rule in &config.rules {
         cmd.arg("--config").arg(rule);
     }
 
-    for pattern in exclude {
+    for pattern in &config.exclude {
         cmd.arg("--exclude").arg(pattern);
+    }
+
+    if let Some(jobs) = config.jobs {
+        cmd.arg("-j").arg(jobs.to_string());
     }
 
     if let Some(sha) = baseline_commit {
@@ -89,21 +92,19 @@ fn build_command(
 }
 
 /// Format the command for debug logging.
-fn format_command_display(
-    rules: &[String],
-    baseline_commit: Option<&str>,
-    timeout_seconds: u64,
-    exclude: &[String],
-) -> String {
+fn format_command_display(config: &SemgrepConfig, baseline_commit: Option<&str>) -> String {
     let mut parts = vec![format!(
         "semgrep scan --json --quiet --timeout {}",
-        timeout_seconds
+        config.timeout_seconds
     )];
-    for r in rules {
+    for r in &config.rules {
         parts.push(format!("--config {r}"));
     }
-    for e in exclude {
+    for e in &config.exclude {
         parts.push(format!("--exclude {e}"));
+    }
+    if let Some(jobs) = config.jobs {
+        parts.push(format!("-j {jobs}"));
     }
     if let Some(sha) = baseline_commit {
         parts.push(format!("--baseline-commit {sha}"));
@@ -117,19 +118,18 @@ fn format_command_display(
 /// Enforces a timeout on our side (kills the process if exceeded).
 pub async fn run_semgrep(
     target_dir: &str,
-    rules: &[String],
+    config: &SemgrepConfig,
     baseline_commit: Option<&str>,
-    timeout_seconds: u64,
-    exclude: &[String],
 ) -> Result<Vec<Finding>> {
-    let mut cmd = build_command(target_dir, rules, baseline_commit, timeout_seconds, exclude);
+    let mut cmd = build_command(target_dir, config, baseline_commit);
 
-    let cmd_display = format_command_display(rules, baseline_commit, timeout_seconds, exclude);
+    let cmd_display = format_command_display(config, baseline_commit);
     info!(cmd = %cmd_display, target_dir, "executing semgrep");
 
     let start = std::time::Instant::now();
 
     // Enforce timeout on our side — kill semgrep if it hangs
+    let timeout_seconds = config.timeout_seconds;
     let timeout_duration = Duration::from_secs(timeout_seconds + 10); // grace period
     let output = tokio::time::timeout(timeout_duration, cmd.output())
         .await
@@ -277,48 +277,68 @@ mod tests {
         assert!(findings.is_empty());
     }
 
+    fn config_with(exclude: Vec<String>, jobs: Option<u32>) -> SemgrepConfig {
+        SemgrepConfig {
+            rules: vec!["auto".into()],
+            timeout_seconds: 60,
+            exclude,
+            jobs,
+        }
+    }
+
+    /// Helper: collect all positions of a flag in the args list.
+    fn flag_positions(args: &[&std::ffi::OsStr], flag: &str) -> Vec<usize> {
+        args.iter()
+            .enumerate()
+            .filter(|(_, a)| **a == std::ffi::OsStr::new(flag))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
     #[test]
     fn build_command_includes_exclude_flags() {
-        let rules = vec!["auto".into()];
-        let exclude = vec![".github/".into(), "config/database.yml".into()];
-        let cmd = build_command("/tmp", &rules, Some("abc123"), 60, &exclude);
+        let cfg = config_with(vec![".github/".into(), "config/database.yml".into()], None);
+        let cmd = build_command("/tmp", &cfg, Some("abc123"));
         let args: Vec<_> = cmd.as_std().get_args().collect();
-        assert!(args.contains(&std::ffi::OsStr::new("--exclude")));
-        // Verify both patterns appear right after their --exclude flag
-        let positions: Vec<_> = args
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| **a == std::ffi::OsStr::new("--exclude"))
-            .map(|(i, _)| i)
-            .collect();
+        let positions = flag_positions(&args, "--exclude");
         assert_eq!(positions.len(), 2);
         assert_eq!(args[positions[0] + 1], ".github/");
         assert_eq!(args[positions[1] + 1], "config/database.yml");
     }
 
     #[test]
-    fn build_command_without_exclude() {
-        let rules = vec!["auto".into()];
-        let cmd = build_command("/tmp", &rules, None, 120, &[]);
+    fn build_command_default_omits_exclude_and_jobs() {
+        let cfg = SemgrepConfig::default();
+        let cmd = build_command("/tmp", &cfg, None);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(!args.contains(&std::ffi::OsStr::new("--exclude")));
+        assert!(!args.contains(&std::ffi::OsStr::new("-j")));
     }
 
     #[test]
-    fn format_command_display_with_exclude() {
-        let rules = vec!["auto".into()];
-        let exclude = vec![".github/".into()];
-        let display = format_command_display(&rules, Some("abc"), 60, &exclude);
+    fn build_command_includes_jobs_flag() {
+        let cfg = config_with(vec![], Some(4));
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        let positions = flag_positions(&args, "-j");
+        assert_eq!(positions.len(), 1);
+        assert_eq!(args[positions[0] + 1], "4");
+    }
+
+    #[test]
+    fn format_command_display_full() {
+        let cfg = config_with(vec![".github/".into()], Some(8));
+        let display = format_command_display(&cfg, Some("abc"));
         assert_eq!(
             display,
-            "semgrep scan --json --quiet --timeout 60 --config auto --exclude .github/ --baseline-commit abc"
+            "semgrep scan --json --quiet --timeout 60 --config auto --exclude .github/ -j 8 --baseline-commit abc"
         );
     }
 
     #[test]
-    fn format_command_display_without_exclude() {
-        let rules = vec!["auto".into()];
-        let display = format_command_display(&rules, None, 120, &[]);
+    fn format_command_display_minimal() {
+        let cfg = SemgrepConfig::default();
+        let display = format_command_display(&cfg, None);
         assert_eq!(
             display,
             "semgrep scan --json --quiet --timeout 120 --config auto"
