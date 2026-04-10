@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "cartomancer"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -395,7 +395,7 @@ dependencies = [
 
 [[package]]
 name = "cartomancer-core"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "cartomancer-github"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "cartomancer-core",
@@ -418,7 +418,7 @@ dependencies = [
 
 [[package]]
 name = "cartomancer-graph"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "cartog",

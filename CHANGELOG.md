@@ -1,3 +1,14 @@
+## [0.3.2] - 2026-04-10
+
+### 🚀 Features
+
+- *(llm)* Add health check before pipeline runs
+- *(llm)* Concurrent finding deepening with configurable concurrency
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Add Dependabot for Cargo and GitHub Actions updates
+- Bump version to 0.3.2
 ## [0.3.1] - 2026-04-10
 
 ### 🚀 Features
