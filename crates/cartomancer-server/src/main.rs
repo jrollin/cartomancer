@@ -4,6 +4,7 @@
 //! Semgrep -> cartog -> escalation -> LLM pipeline.
 
 mod cli;
+mod comment;
 mod config;
 mod llm;
 mod pipeline;
@@ -18,6 +19,9 @@ use tracing::info;
 
 use cartomancer_core::finding::Finding;
 use cartomancer_core::severity::Severity;
+use cartomancer_github::client::GitHubClient;
+use cartomancer_github::diff::is_line_in_diff;
+use cartomancer_github::types::ReviewComment;
 use cartomancer_graph::enricher::CartogEnricher;
 use cartomancer_graph::escalator::SeverityEscalator;
 
@@ -42,10 +46,104 @@ async fn main() -> Result<()> {
         Command::Serve { port } => {
             todo!("webhook server on port {port}")
         }
-        Command::Review { repo, pr } => {
-            todo!("GitHub PR review for {repo}#{pr}")
-        }
+        Command::Review {
+            repo,
+            pr,
+            work_dir,
+            dry_run,
+            format,
+        } => cmd_review(&repo, pr, work_dir.as_deref(), dry_run, &format, &config).await,
     }
+}
+
+async fn cmd_review(
+    repo: &str,
+    pr: u64,
+    work_dir: Option<&str>,
+    dry_run: bool,
+    format: &OutputFormat,
+    config: &cartomancer_core::config::AppConfig,
+) -> Result<()> {
+    // Resolve GitHub token
+    let token = config
+        .github
+        .token
+        .clone()
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "GitHub token required: set GITHUB_TOKEN env var or github.token in config"
+            )
+        })?;
+
+    let github = GitHubClient::new(&token);
+
+    // Run the pipeline
+    let result = pipeline::run_pipeline(config, &github, &token, repo, pr, work_dir).await?;
+    let review = &result.review;
+
+    if dry_run {
+        // Output ReviewResult as JSON, skip posting
+        match format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::to_string_pretty(review)?);
+            }
+            OutputFormat::Text => {
+                println!("{}", review.summary);
+                if !review.findings.is_empty() {
+                    println!();
+                    print_findings(&review.findings);
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Post to GitHub
+    if review.findings.is_empty() {
+        // Clean scan — post summary comment
+        github.post_comment(repo, pr, &review.summary).await?;
+        info!("clean summary posted for {repo}#{pr}");
+    } else {
+        // Build inline comments for findings on diff lines
+        let mut inline_comments = Vec::new();
+        let mut off_diff_findings = Vec::new();
+
+        for finding in &review.findings {
+            if is_line_in_diff(&result.diff, &finding.file_path, finding.start_line) {
+                inline_comments.push(ReviewComment {
+                    path: finding.file_path.clone(),
+                    line: finding.start_line,
+                    body: comment::format_inline_comment(finding),
+                });
+            } else {
+                off_diff_findings.push(finding);
+            }
+        }
+
+        // Post review with inline comments
+        github
+            .post_review(repo, pr, &review.head_sha, &review.summary, inline_comments)
+            .await?;
+
+        // Post off-diff findings as regular comments
+        for finding in &off_diff_findings {
+            let body = format!(
+                "**Off-diff finding** in `{}:{}`\n\n{}",
+                finding.file_path,
+                finding.start_line,
+                comment::format_inline_comment(finding),
+            );
+            github.post_comment(repo, pr, &body).await?;
+        }
+
+        info!(
+            total = review.findings.len(),
+            "review posted for {repo}#{pr}"
+        );
+    }
+
+    Ok(())
 }
 
 async fn cmd_scan(
@@ -196,7 +294,7 @@ async fn cmd_scan(
                 info!(
                     deepened,
                     failed,
-                    skipped = candidates.len() as u32 - deepened - failed,
+                    skipped = (candidates.len() as u32).saturating_sub(deepened + failed),
                     elapsed_ms = llm_start.elapsed().as_millis() as u64,
                     "LLM deepening complete"
                 );

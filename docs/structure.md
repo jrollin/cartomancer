@@ -34,15 +34,17 @@ cartomancer/
 │   ├── cartomancer-github/             # GitHub API
 │   │   └── src/
 │   │       ├── lib.rs
-│   │       ├── client.rs
-│   │       ├── diff.rs
+│   │       ├── client.rs              # GitHubClient: fetch, post review/comment
+│   │       ├── diff.rs                # parse_diff(), is_line_in_diff()
+│   │       ├── types.rs               # PrMetadata, ReviewComment, API request types
 │   │       └── webhook.rs
 │   └── cartomancer-server/             # binary: pipeline + CLI
 │       ├── src/
-│       │   ├── main.rs
-│       │   ├── cli.rs
+│       │   ├── main.rs                # entry point: cmd_scan, cmd_review
+│       │   ├── cli.rs                 # clap: scan, review (--work-dir, --dry-run), serve
+│       │   ├── comment.rs             # format_inline_comment, format_summary
 │       │   ├── config.rs
-│       │   ├── pipeline.rs
+│       │   ├── pipeline.rs            # run_pipeline: clone → scan → enrich → post
 │       │   ├── semgrep.rs
 │       │   ├── webhook.rs
 │       │   └── llm/
@@ -61,8 +63,8 @@ cartomancer/
 |-------|------|------|-----------|
 | `cartomancer-core` | lib | Pure domain model, no I/O | `Finding`, `GraphContext`, `Severity`, `AppConfig`, `LlmBackend`, `ReviewResult` |
 | `cartomancer-graph` | lib | cartog integration + severity escalation | `CartogEnricher`, `SeverityEscalator` |
-| `cartomancer-github` | lib | GitHub REST API client | `GitHubClient`, `PullRequestEvent`, `parse_diff()` |
-| `cartomancer-server` | bin | Pipeline orchestration, CLI, webhook | `Cli`, `LlmProvider`, `run_pipeline()`, `run_semgrep()` |
+| `cartomancer-github` | lib | GitHub REST API client + diff parser | `GitHubClient`, `PrMetadata`, `ReviewComment`, `parse_diff()`, `is_line_in_diff()` |
+| `cartomancer-server` | bin | Pipeline orchestration, CLI, webhook | `Cli`, `LlmProvider`, `run_pipeline()`, `run_semgrep()`, `format_inline_comment()` |
 
 ## Dependency Graph
 
@@ -80,9 +82,10 @@ cartomancer-server
 
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
-| `cli` | Clap argument parsing | - |
+| `cli` | Clap argument parsing (scan, review, serve) | - |
+| `comment` | Format inline comments + summary for GitHub | cartomancer-core::finding |
 | `config` | TOML config loading | cartomancer-core::config |
-| `pipeline` | Orchestration state machine | all other modules |
+| `pipeline` | Review orchestration: clone → scan → enrich → build ReviewResult | all other modules |
 | `semgrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
 | `llm/` | Provider trait + Ollama + Anthropic | cartomancer-core::finding |
 | `webhook` | Axum HTTP handler | pipeline, cartomancer-github |
