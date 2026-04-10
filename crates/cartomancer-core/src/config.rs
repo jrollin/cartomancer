@@ -10,7 +10,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub github: GitHubConfig,
     #[serde(default)]
-    pub semgrep: SemgrepConfig,
+    pub opengrep: OpengrepConfig,
     #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
@@ -40,31 +40,57 @@ impl std::fmt::Debug for GitHubConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SemgrepConfig {
-    #[serde(default = "default_semgrep_rules")]
+pub struct OpengrepConfig {
+    #[serde(default = "default_opengrep_rules")]
     pub rules: Vec<String>,
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
-    /// Glob patterns passed as `--exclude` to semgrep (e.g. `.github/`, `config/database.yml`).
+    /// Glob patterns passed as `--exclude` to opengrep (e.g. `.github/`, `config/database.yml`).
     #[serde(default)]
     pub exclude: Vec<String>,
-    /// Number of parallel jobs (`-j`). When `None`, semgrep auto-detects from CPU count.
+    /// Number of parallel jobs (`-j`). When `None`, opengrep auto-detects from CPU count.
     #[serde(default)]
     pub jobs: Option<u32>,
+    /// Enable cross-function taint analysis within a file (`--taint-intrafile`).
+    #[serde(default)]
+    pub taint_intrafile: bool,
+    /// Custom inline ignore annotation pattern (`--opengrep-ignore-pattern=<VAL>`).
+    #[serde(default)]
+    pub ignore_pattern: Option<String>,
+    /// Capture enclosing function/class body (`--experimental --output-enclosing-context`).
+    #[serde(default)]
+    pub enclosing_context: bool,
+    /// Use file-size-scaled timeouts instead of flat `timeout_seconds`.
+    /// When enabled, `--timeout` is replaced by `--dynamic-timeout`.
+    /// `timeout_seconds` is still used as the Rust-side process safety timeout.
+    #[serde(default)]
+    pub dynamic_timeout: bool,
+    /// Base timeout unit in KB for dynamic timeout.
+    #[serde(default)]
+    pub dynamic_timeout_unit_kb: Option<u32>,
+    /// Maximum multiplier for dynamic timeout.
+    #[serde(default)]
+    pub dynamic_timeout_max_multiplier: Option<f32>,
 }
 
-impl Default for SemgrepConfig {
+impl Default for OpengrepConfig {
     fn default() -> Self {
         Self {
-            rules: default_semgrep_rules(),
+            rules: default_opengrep_rules(),
             timeout_seconds: default_timeout(),
             exclude: Vec::new(),
             jobs: None,
+            taint_intrafile: false,
+            ignore_pattern: None,
+            enclosing_context: false,
+            dynamic_timeout: false,
+            dynamic_timeout_unit_kb: None,
+            dynamic_timeout_max_multiplier: None,
         }
     }
 }
 
-fn default_semgrep_rules() -> Vec<String> {
+fn default_opengrep_rules() -> Vec<String> {
     vec!["auto".into()]
 }
 
@@ -206,10 +232,16 @@ mod tests {
     #[test]
     fn default_config_is_valid() {
         let config = AppConfig::default();
-        assert_eq!(config.semgrep.rules, vec!["auto"]);
-        assert_eq!(config.semgrep.timeout_seconds, 120);
-        assert!(config.semgrep.exclude.is_empty());
-        assert!(config.semgrep.jobs.is_none());
+        assert_eq!(config.opengrep.rules, vec!["auto"]);
+        assert_eq!(config.opengrep.timeout_seconds, 120);
+        assert!(config.opengrep.exclude.is_empty());
+        assert!(config.opengrep.jobs.is_none());
+        assert!(!config.opengrep.taint_intrafile);
+        assert!(config.opengrep.ignore_pattern.is_none());
+        assert!(!config.opengrep.enclosing_context);
+        assert!(!config.opengrep.dynamic_timeout);
+        assert!(config.opengrep.dynamic_timeout_unit_kb.is_none());
+        assert!(config.opengrep.dynamic_timeout_max_multiplier.is_none());
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
@@ -219,26 +251,62 @@ mod tests {
 
     #[test]
     fn deserialize_toml_with_defaults() {
-        let toml_str = "[semgrep]\nrules = [\"auto\"]\n";
+        let toml_str = "[opengrep]\nrules = [\"auto\"]\n";
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
     }
 
     #[test]
-    fn deserialize_semgrep_exclude_and_jobs() {
+    fn deserialize_opengrep_taint_and_ignore() {
         let toml_str = r#"
-[semgrep]
+[opengrep]
+taint_intrafile = true
+ignore_pattern = "nosec"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.opengrep.taint_intrafile);
+        assert_eq!(config.opengrep.ignore_pattern.as_deref(), Some("nosec"));
+    }
+
+    #[test]
+    fn deserialize_opengrep_enclosing_context() {
+        let toml_str = r#"
+[opengrep]
+enclosing_context = true
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.opengrep.enclosing_context);
+    }
+
+    #[test]
+    fn deserialize_opengrep_dynamic_timeout() {
+        let toml_str = r#"
+[opengrep]
+dynamic_timeout = true
+dynamic_timeout_unit_kb = 10
+dynamic_timeout_max_multiplier = 5.0
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert!(config.opengrep.dynamic_timeout);
+        assert_eq!(config.opengrep.dynamic_timeout_unit_kb, Some(10));
+        assert_eq!(config.opengrep.dynamic_timeout_max_multiplier, Some(5.0));
+    }
+
+    #[test]
+    fn deserialize_opengrep_exclude_and_jobs() {
+        let toml_str = r#"
+[opengrep]
 rules = ["auto"]
 exclude = [".github/", "config/database.yml"]
 jobs = 4
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(
-            config.semgrep.exclude,
+            config.opengrep.exclude,
             vec![".github/", "config/database.yml"]
         );
-        assert_eq!(config.semgrep.jobs, Some(4));
+        assert_eq!(config.opengrep.jobs, Some(4));
     }
 
     #[test]
@@ -264,7 +332,7 @@ provider = "ollama"
 
     #[test]
     fn storage_db_path_defaults() {
-        let toml_str = "[semgrep]\nrules = [\"auto\"]\n";
+        let toml_str = "[opengrep]\nrules = [\"auto\"]\n";
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.storage.db_path, ".cartomancer.db");
     }

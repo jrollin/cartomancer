@@ -1,15 +1,19 @@
 # Cartomancer
 
+[![CI](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml/badge.svg)](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jrollin/cartomancer/branch/main/graph/badge.svg)](https://codecov.io/gh/jrollin/cartomancer)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > PR review with blast radius awareness.
 
-Cartomancer combines [Semgrep](https://semgrep.dev/) static analysis with [cartog](https://github.com/jrollin/cartog) code graph intelligence to produce severity-escalated, structurally-aware review comments on GitHub pull requests.
+Cartomancer combines [opengrep](https://github.com/opengrep/opengrep) static analysis with [cartog](https://github.com/jrollin/cartog) code graph intelligence to produce severity-escalated, structurally-aware review comments on GitHub pull requests.
 
 **The core idea**: a finding that touches your auth flow and has 30 downstream callers is not the same severity as the same finding in a dead utility function. Cartomancer knows the difference.
 
 ## Architecture
 
 ```
-GitHub webhook → fetch diff → semgrep scan → cartog enrich
+GitHub webhook → fetch diff → opengrep scan → cartog enrich
   → escalate severity → LLM deepen (conditional)
   → regression check → dismiss filter → persist + post comments
 ```
@@ -19,11 +23,11 @@ GitHub webhook → fetch diff → semgrep scan → cartog enrich
 | Tool | Version | Required | Install |
 |------|---------|----------|---------|
 | Rust | 1.77+ | Yes | [rustup.rs](https://rustup.rs/) |
-| Semgrep CLI | 1.x | Yes | `pip install semgrep` or `brew install semgrep` |
+| Opengrep CLI | latest | Yes | [install script](https://github.com/opengrep/opengrep#install) or [GitHub releases](https://github.com/opengrep/opengrep/releases) |
 | cartog | 0.10+ | Recommended | `cargo install cartog` (for graph enrichment) |
 | Ollama | any | Optional | [ollama.com](https://ollama.com/) (for local LLM deepening) |
 
-Semgrep must be in your `PATH`. Without it, Cartomancer cannot run.
+Opengrep must be in your `PATH`. Without it, Cartomancer cannot run.
 
 ## Quickstart
 

@@ -1,6 +1,6 @@
 # Cartomancer
 
-PR review tool: Semgrep + cartog blast radius + LLM deepening → GitHub comments.
+PR review tool: opengrep + cartog blast radius + LLM deepening → GitHub comments.
 
 ## Documentation
 
@@ -30,7 +30,7 @@ cartomancer-server (binary)
 
 ## Key Types
 
-- `Finding` (core::finding) — Semgrep finding + optional graph context + LLM analysis
+- `Finding` (core::finding) — opengrep finding + optional graph context + LLM analysis
 - `GraphContext` (core::finding) — blast radius, callers, domain tags from cartog
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
@@ -65,7 +65,7 @@ cartomancer serve [--port <n>]                    # not yet implemented
 2. Fetch PR metadata (GitHub API → head SHA, base SHA)
 3. Prepare work dir (clone to temp dir, or reuse `--work-dir`)
 4. Fetch + parse unified diff (GitHub API → `PullRequestDiff`)
-5. Semgrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns from config)
+5. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns from config)
 6. Enrich with cartog (impact, refs, callers, domain detection)
 7. Escalate severity (blast radius thresholds + domain tags)
 8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3)
@@ -78,7 +78,7 @@ cartomancer serve [--port <n>]                    # not yet implemented
 
 ## External Dependencies
 
-- **Semgrep**: must be in PATH, invoked as subprocess
+- **Opengrep**: must be in PATH, invoked as subprocess. Supports opengrep-specific flags: `--taint-intrafile`, `--opengrep-ignore-pattern`, `--output-enclosing-context`, `--dynamic-timeout`
 - **Ollama**: optional, local LLM at `http://localhost:11434/api/chat`
 - **Anthropic API**: optional, production LLM at `https://api.anthropic.com/v1/messages`
 - **cartog**: compiled in as Rust crate, SQLite-based code graph

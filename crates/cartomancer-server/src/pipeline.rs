@@ -3,7 +3,7 @@
 //! Stages:
 //! 1. Prepare working directory (clone or reuse)
 //! 2. Fetch PR metadata and diff (GitHub API)
-//! 3. Run semgrep scan (subprocess with --baseline-commit)
+//! 3. Run opengrep scan (subprocess with --baseline-commit)
 //! 4. Enrich with cartog graph context
 //! 5. Escalate severity based on blast radius
 //! 6. LLM deepen high-severity findings (conditional)
@@ -32,7 +32,7 @@ use cartomancer_store::types::ScanRecord;
 
 use crate::comment;
 use crate::llm;
-use crate::semgrep;
+use crate::opengrep;
 
 /// Outcome of the pipeline, including the parsed diff and work directory for cleanup.
 pub struct PipelineResult {
@@ -79,7 +79,7 @@ pub async fn run_pipeline(
     let (work_path, temp_dir) = prepare_work_dir(repo, token, work_dir)?;
     let work_str = work_path.to_string_lossy();
 
-    // Fetch and checkout PR head, fetch base for --baseline-commit
+    // Fetch and checkout PR head, fetch base for opengrep --baseline-commit
     prepare_pr_commits(&work_path, &pr_meta)?;
 
     // 3. Fetch and parse diff
@@ -92,16 +92,16 @@ pub async fn run_pipeline(
         "diff parsed"
     );
 
-    // 4. Run semgrep with --baseline-commit
-    let semgrep_start = Instant::now();
+    // 4. Run opengrep with --baseline-commit
+    let opengrep_start = Instant::now();
     let mut findings =
-        semgrep::run_semgrep(&work_str, &config.semgrep, Some(&pr_meta.base_sha)).await?;
-    let semgrep_elapsed = semgrep_start.elapsed();
-    let rule_count = config.semgrep.rules.len();
+        opengrep::run_opengrep(&work_str, &config.opengrep, Some(&pr_meta.base_sha)).await?;
+    let opengrep_elapsed = opengrep_start.elapsed();
+    let rule_count = config.opengrep.rules.len();
     info!(
         findings = findings.len(),
-        elapsed_ms = semgrep_elapsed.as_millis() as u64,
-        "semgrep scan complete"
+        elapsed_ms = opengrep_elapsed.as_millis() as u64,
+        "opengrep scan complete"
     );
 
     if findings.is_empty() {
@@ -112,7 +112,7 @@ pub async fn run_pipeline(
             repo_full_name: repo.to_string(),
             head_sha: pr_meta.head_sha,
             findings: vec![],
-            summary: comment::format_clean_summary(semgrep_elapsed, rule_count),
+            summary: comment::format_clean_summary(opengrep_elapsed, rule_count),
             status: ReviewStatus::Completed,
         };
         return Ok(PipelineResult {
@@ -236,7 +236,7 @@ fn clone_repo(repo: &str, token: &str, target: &Path) -> Result<()> {
 }
 
 /// Fetch and checkout the PR head commit, and fetch the base commit
-/// so semgrep `--baseline-commit` can find it.
+/// so opengrep `--baseline-commit` can find it.
 fn prepare_pr_commits(work_path: &Path, pr_meta: &PrMetadata) -> Result<()> {
     // Fetch head SHA
     let status = std::process::Command::new("git")
@@ -272,7 +272,7 @@ fn prepare_pr_commits(work_path: &Path, pr_meta: &PrMetadata) -> Result<()> {
         );
     }
 
-    // Fetch base SHA so semgrep --baseline-commit can find it
+    // Fetch base SHA so opengrep --baseline-commit can find it
     let status = std::process::Command::new("git")
         .args(["fetch", "origin", &pr_meta.base_sha, "--depth", "50"])
         .current_dir(work_path)
@@ -284,7 +284,7 @@ fn prepare_pr_commits(work_path: &Path, pr_meta: &PrMetadata) -> Result<()> {
     if !status.success() {
         warn!(
             base_sha = %&pr_meta.base_sha[..8.min(pr_meta.base_sha.len())],
-            "git fetch of PR base failed — semgrep --baseline-commit may not work"
+            "git fetch of PR base failed — opengrep --baseline-commit may not work"
         );
     }
 
@@ -607,6 +607,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,
@@ -715,6 +716,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }
         }
 
@@ -835,6 +837,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }
         }
 

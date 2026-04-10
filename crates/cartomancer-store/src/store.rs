@@ -61,8 +61,8 @@ impl Store {
             let mut stmt = tx.prepare(
                 "INSERT INTO findings (scan_id, fingerprint, rule_id, severity, file_path,
                  start_line, end_line, message, snippet, cwe, graph_context_json,
-                 llm_analysis, escalation_reasons_json)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 llm_analysis, escalation_reasons_json, enclosing_context)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             )?;
 
             for f in findings {
@@ -91,6 +91,7 @@ impl Store {
                     graph_json,
                     f.llm_analysis,
                     escalation_json,
+                    f.enclosing_context,
                 ])?;
             }
         }
@@ -141,7 +142,8 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT id, scan_id, fingerprint, rule_id, severity, file_path,
                     start_line, end_line, message, snippet, cwe,
-                    graph_context_json, llm_analysis, escalation_reasons_json
+                    graph_context_json, llm_analysis, escalation_reasons_json,
+                    enclosing_context
              FROM findings WHERE scan_id = ?1
              ORDER BY
                  CASE severity
@@ -169,6 +171,7 @@ impl Store {
                 graph_context_json: row.get(11)?,
                 llm_analysis: row.get(12)?,
                 escalation_reasons_json: row.get(13)?,
+                enclosing_context: row.get(14)?,
             })
         })?;
 
@@ -180,7 +183,8 @@ impl Store {
         let mut sql = String::from(
             "SELECT f.id, f.scan_id, f.fingerprint, f.rule_id, f.severity, f.file_path,
                     f.start_line, f.end_line, f.message, f.snippet, f.cwe,
-                    f.graph_context_json, f.llm_analysis, f.escalation_reasons_json
+                    f.graph_context_json, f.llm_analysis, f.escalation_reasons_json,
+                    f.enclosing_context
              FROM findings f
              JOIN scans s ON f.scan_id = s.id
              WHERE 1=1",
@@ -240,6 +244,7 @@ impl Store {
                 graph_context_json: row.get(11)?,
                 llm_analysis: row.get(12)?,
                 escalation_reasons_json: row.get(13)?,
+                enclosing_context: row.get(14)?,
             })
         })?;
 
@@ -409,6 +414,7 @@ mod tests {
             llm_analysis: None,
             escalation_reasons: vec![],
             is_new: None,
+            enclosing_context: None,
         }
     }
 

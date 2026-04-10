@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding new migrations.
-pub const CURRENT_VERSION: i32 = 1;
+pub const CURRENT_VERSION: i32 = 2;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
 ///
@@ -25,6 +25,9 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
 
     if version < 1 {
         migrate_v1(conn)?;
+    }
+    if version < 2 {
+        migrate_v2(conn)?;
     }
 
     Ok(())
@@ -80,6 +83,18 @@ fn migrate_v1(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX idx_dismissals_fingerprint ON dismissals(fingerprint);
 
         PRAGMA user_version = 1;
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        ALTER TABLE findings ADD COLUMN enclosing_context TEXT;
+
+        PRAGMA user_version = 2;
         ",
     )?;
 
@@ -210,6 +225,7 @@ mod tests {
             "graph_context_json",
             "llm_analysis",
             "escalation_reasons_json",
+            "enclosing_context",
         ];
         for col in expected {
             assert!(columns.contains(&col.to_string()), "missing column: {col}");

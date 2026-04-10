@@ -56,7 +56,7 @@ cartomancer/
 │       │   ├── comment.rs             # format_inline_comment, format_summary
 │       │   ├── config.rs
 │       │   ├── pipeline.rs            # run_pipeline, persist_scan, annotate_regression, filter_dismissed
-│       │   ├── semgrep.rs
+│       │   ├── opengrep.rs
 │       │   ├── webhook.rs
 │       │   └── llm/
 │       │       ├── mod.rs              # LlmProvider trait
@@ -101,7 +101,7 @@ cartomancer-server
 | `comment` | Format inline comments + summary for GitHub | cartomancer-core::finding |
 | `config` | TOML config loading | cartomancer-core::config |
 | `pipeline` | Review orchestration + persistence + regression + dismissal filtering | all other modules, cartomancer-store |
-| `semgrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
+| `opengrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
 | `llm/` | Provider trait + Ollama + Anthropic | cartomancer-core::finding |
 | `webhook` | Axum HTTP handler | pipeline, cartomancer-github |
 

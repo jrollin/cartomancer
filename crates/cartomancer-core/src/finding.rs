@@ -1,10 +1,10 @@
-//! Semgrep finding representation and enrichment data.
+//! Opengrep finding representation and enrichment data.
 
 use serde::{Deserialize, Serialize};
 
 use crate::severity::Severity;
 
-/// A finding from Semgrep, potentially enriched with graph context.
+/// A finding from opengrep, potentially enriched with graph context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub rule_id: String,
@@ -26,6 +26,9 @@ pub struct Finding {
     /// `None` when regression detection was not performed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_new: Option<bool>,
+    /// Enclosing function/class body from opengrep `--output-enclosing-context`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enclosing_context: Option<String>,
 }
 
 /// Blast radius and caller context from cartog.
@@ -58,6 +61,7 @@ mod tests {
             llm_analysis: None,
             escalation_reasons: vec![],
             is_new: None,
+            enclosing_context: None,
         };
         assert!(f.graph_context.is_none());
         assert!(f.llm_analysis.is_none());

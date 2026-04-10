@@ -33,6 +33,7 @@ pub struct StoredFinding {
     pub graph_context_json: Option<String>,
     pub llm_analysis: Option<String>,
     pub escalation_reasons_json: Option<String>,
+    pub enclosing_context: Option<String>,
 }
 
 /// A dismissal record (maps to the `dismissals` table).
