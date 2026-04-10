@@ -14,7 +14,7 @@ repository = "https://github.com/jrollin/cartomancer"
 cartomancer-core = { path = "crates/cartomancer-core", version = "0.2.0" }
 cartomancer-graph = { path = "crates/cartomancer-graph", version = "0.2.0" }
 cartomancer-github = { path = "crates/cartomancer-github", version = "0.2.0" }
-cartomancer-server = { path = "crates/cartomancer-server", version = "0.2.0" }
+cartomancer = { path = "crates/cartomancer-server", version = "0.2.0" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }

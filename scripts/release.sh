@@ -72,7 +72,7 @@ info "bumping $CURRENT → $NEW"
 
 # update workspace version + internal crate dependency versions in Cargo.toml
 sed -e "/^\[workspace\.package\]/,/^\[/ s/version = \"${CURRENT}\"/version = \"${NEW}\"/" \
-    -e "/^cartomancer-/ s/version = \"${CURRENT}\"/version = \"${NEW}\"/" \
+    -e "/^cartomancer/ s/version = \"${CURRENT}\"/version = \"${NEW}\"/" \
     "$CARGO_TOML" > "$CARGO_TOML.tmp" && mv "$CARGO_TOML.tmp" "$CARGO_TOML"
 
 # update Cargo.lock
@@ -82,17 +82,24 @@ info "committing version bump"
 git add "$CARGO_TOML" Cargo.lock
 git commit -m "chore: bump version to ${NEW}"
 
-info "tagging $TAG"
-git tag -a "$TAG" -m "Release ${TAG}"
-
-# generate / update CHANGELOG.md with git-cliff (tag must exist first)
+# generate / update CHANGELOG.md with git-cliff
+# git-cliff needs the tag to generate correct changelog, so we:
+# tag → generate → delete tag → amend commit → re-tag on amended commit
 if command -v git-cliff &>/dev/null; then
   info "generating CHANGELOG.md with git-cliff"
+
+  # temporary tag so git-cliff sees the release boundary
+  git tag -a "$TAG" -m "Release ${TAG}"
+
   if [[ -f cliff.toml ]]; then
     git-cliff --config cliff.toml -o CHANGELOG.md
   else
     git-cliff -o CHANGELOG.md
   fi
+
+  # remove temp tag before amending (tag would point to old commit)
+  git tag -d "$TAG" >/dev/null
+
   if ! git diff --quiet CHANGELOG.md 2>/dev/null; then
     git add CHANGELOG.md
     git commit --amend --no-edit
@@ -100,6 +107,9 @@ if command -v git-cliff &>/dev/null; then
 else
   info "git-cliff not found — skipping local CHANGELOG.md update (CI will still generate release notes)"
 fi
+
+info "tagging $TAG"
+git tag -a "$TAG" -m "Release ${TAG}"
 
 info "pushing commit and tag"
 git push origin HEAD

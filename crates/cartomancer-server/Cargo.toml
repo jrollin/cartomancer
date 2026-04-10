@@ -1,6 +1,6 @@
 [package]
-name = "cartomancer-server"
-description = "Pipeline orchestration, webhook handler, and CLI for Cartomancer"
+name = "cartomancer"
+description = "PR review tool with blast radius awareness — Semgrep + cartog + LLM"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

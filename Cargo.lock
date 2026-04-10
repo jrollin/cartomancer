@@ -371,6 +371,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "cartomancer"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "cartomancer-core",
+ "cartomancer-github",
+ "cartomancer-graph",
+ "clap",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "cartomancer-core"
 version = "0.2.0"
 dependencies = [
@@ -401,29 +424,6 @@ dependencies = [
  "cartog",
  "cartomancer-core",
  "tracing",
-]
-
-[[package]]
-name = "cartomancer-server"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "cartomancer-core",
- "cartomancer-github",
- "cartomancer-graph",
- "clap",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "toml",
- "tower",
- "tower-http",
- "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]

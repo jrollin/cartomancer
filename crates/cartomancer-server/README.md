@@ -1,0 +1,61 @@
+# cartomancer
+
+PR review tool with blast radius awareness — Semgrep + cartog + LLM deepening.
+
+Cartomancer bridges static analysis with code graph intelligence to produce structurally-aware, severity-escalated review comments on GitHub pull requests.
+
+## Install
+
+```bash
+cargo install cartomancer
+```
+
+Requires [Semgrep](https://semgrep.dev/) in PATH.
+
+## Usage
+
+```bash
+# Scan a local directory
+cartomancer scan .
+
+# Review a GitHub PR (requires GITHUB_TOKEN)
+export GITHUB_TOKEN=ghp_...
+cartomancer review owner/repo 42
+
+# Dry run — output review JSON without posting
+cartomancer review owner/repo 42 --dry-run
+
+# Reuse an existing checkout
+cartomancer review owner/repo 42 --work-dir /path/to/repo
+```
+
+## How it works
+
+1. Fetch PR diff from GitHub
+2. Run Semgrep with `--baseline-commit` (only new findings)
+3. Enrich with [cartog](https://crates.io/crates/cartog) blast radius and caller analysis
+4. Escalate severity for findings in auth/payment flows or with large blast radius
+5. Optionally deepen high-severity findings with LLM (Ollama or Anthropic)
+6. Post PR review with inline comments + summary
+
+## Configuration
+
+Create `.cartomancer.toml` in your project root:
+
+```toml
+[semgrep]
+rules = ["auto"]
+timeout_seconds = 120
+
+[llm]
+provider = "ollama"
+ollama_model = "gemma4"
+
+[severity]
+blast_radius_threshold = 5
+llm_deepening_threshold = "error"
+```
+
+## License
+
+MIT

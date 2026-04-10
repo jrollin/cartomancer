@@ -46,7 +46,7 @@ jobs:
         if: runner.os != 'Windows'
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../cartomancer-${{ matrix.target }}.tar.gz cartomancer-server
+          tar czf ../../../cartomancer-${{ matrix.target }}.tar.gz cartomancer
           cd ../../..
 
       # Package windows
@@ -55,7 +55,7 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          7z a ../../../cartomancer-${{ matrix.target }}.zip cartomancer-server.exe
+          7z a ../../../cartomancer-${{ matrix.target }}.zip cartomancer.exe
           cd ../../..
 
       - uses: actions/upload-artifact@v4
@@ -114,12 +114,12 @@ jobs:
             cartomancer-core
             cartomancer-graph
             cartomancer-github
-            cartomancer-server
+            cartomancer
           )
           for crate in "${crates[@]}"; do
             echo "Publishing $crate..."
             cargo publish -p "$crate" --no-verify
-            if [ "$crate" != "cartomancer-server" ]; then
+            if [ "$crate" != "cartomancer" ]; then
               echo "Waiting for crates.io index to update..."
               sleep 60
             fi
