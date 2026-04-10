@@ -19,6 +19,10 @@ pub trait LlmProvider: Send + Sync {
     /// Provider name (e.g. "ollama", "anthropic").
     fn name(&self) -> &str;
 
+    /// Verify connectivity and model availability. Call before the pipeline
+    /// to fail fast instead of discovering issues mid-scan.
+    async fn health_check(&self) -> Result<()>;
+
     /// Send a prompt and return the completion text.
     async fn complete(&self, prompt: &str) -> Result<String>;
 

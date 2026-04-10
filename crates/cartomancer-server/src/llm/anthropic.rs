@@ -56,6 +56,34 @@ impl LlmProvider for AnthropicProvider {
         "anthropic"
     }
 
+    async fn health_check(&self) -> Result<()> {
+        // Send an empty body to verify API key without burning tokens.
+        // Anthropic returns 400 (invalid request) for a valid key, 401 for invalid.
+        let response = self
+            .http
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .body("{}")
+            .send()
+            .await
+            .context("cannot reach Anthropic API")?;
+
+        match response.status() {
+            s if s == reqwest::StatusCode::UNAUTHORIZED => {
+                anyhow::bail!("Anthropic API key is invalid (HTTP 401)");
+            }
+            s if s == reqwest::StatusCode::FORBIDDEN => {
+                anyhow::bail!("Anthropic API key lacks permission (HTTP 403)");
+            }
+            _ => {
+                // 400 (bad request) is expected — means auth passed
+                Ok(())
+            }
+        }
+    }
+
     async fn complete(&self, prompt: &str) -> Result<String> {
         let body = MessagesRequest {
             model: &self.model,

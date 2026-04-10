@@ -51,6 +51,17 @@ pub async fn run_pipeline(
 ) -> Result<PipelineResult> {
     let pipeline_start = Instant::now();
 
+    // 0. LLM health check — warn early if provider is unreachable
+    match llm::create_provider(&config.llm) {
+        Ok(provider) => match provider.health_check().await {
+            Ok(()) => info!(provider = provider.name(), "LLM provider ready"),
+            Err(e) => {
+                warn!(err = %e, "LLM provider health check failed — deepening will be skipped")
+            }
+        },
+        Err(e) => warn!(err = %e, "could not create LLM provider — deepening will be skipped"),
+    }
+
     // 1. Fetch PR metadata
     info!(repo, pr_number, "fetching PR metadata");
     let pr_meta = github.fetch_pr_metadata(repo, pr_number).await?;

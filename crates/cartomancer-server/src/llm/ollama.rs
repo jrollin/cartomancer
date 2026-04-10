@@ -50,10 +50,54 @@ impl OllamaProvider {
     }
 }
 
+#[derive(Deserialize)]
+struct TagsResponse {
+    models: Vec<TagModel>,
+}
+
+#[derive(Deserialize)]
+struct TagModel {
+    name: String,
+}
+
 #[async_trait]
 impl LlmProvider for OllamaProvider {
     fn name(&self) -> &str {
         "ollama"
+    }
+
+    async fn health_check(&self) -> Result<()> {
+        let resp: TagsResponse = self
+            .http
+            .get(format!("{}/api/tags", self.base_url))
+            .send()
+            .await
+            .context(format!(
+                "cannot reach Ollama at {} — is it running?",
+                self.base_url
+            ))?
+            .error_for_status()
+            .context("Ollama health check failed")?
+            .json()
+            .await
+            .context("failed to parse Ollama /api/tags response")?;
+
+        let available: Vec<&str> = resp.models.iter().map(|m| m.name.as_str()).collect();
+        // Ollama model names may include a `:latest` suffix
+        let model_matches = available
+            .iter()
+            .any(|m| *m == self.model || *m == format!("{}:latest", self.model));
+
+        if !model_matches {
+            anyhow::bail!(
+                "model '{}' not found in Ollama — available: [{}]. Pull it with: ollama pull {}",
+                self.model,
+                available.join(", "),
+                self.model,
+            );
+        }
+
+        Ok(())
     }
 
     async fn complete(&self, prompt: &str) -> Result<String> {
