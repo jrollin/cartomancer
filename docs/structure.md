@@ -5,7 +5,8 @@
 ```
 cartomancer/
 ├── Cargo.toml                          # workspace root
-├── .cartomancer.yaml                   # example config
+├── .cartomancer.toml                   # example config
+├── LICENSE                             # MIT license
 ├── deny.toml                           # cargo-deny policy
 ├── rustfmt.toml                        # format config
 ├── .gitignore
@@ -58,7 +59,7 @@ cartomancer/
 
 | Crate | Type | Role | Key types |
 |-------|------|------|-----------|
-| `cartomancer-core` | lib | Pure domain model, no I/O | `Finding`, `GraphContext`, `Severity`, `AppConfig`, `ReviewResult` |
+| `cartomancer-core` | lib | Pure domain model, no I/O | `Finding`, `GraphContext`, `Severity`, `AppConfig`, `LlmBackend`, `ReviewResult` |
 | `cartomancer-graph` | lib | cartog integration + severity escalation | `CartogEnricher`, `SeverityEscalator` |
 | `cartomancer-github` | lib | GitHub REST API client | `GitHubClient`, `PullRequestEvent`, `parse_diff()` |
 | `cartomancer-server` | bin | Pipeline orchestration, CLI, webhook | `Cli`, `LlmProvider`, `run_pipeline()`, `run_semgrep()` |
@@ -80,7 +81,7 @@ cartomancer-server
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
 | `cli` | Clap argument parsing | - |
-| `config` | YAML config loading | cartomancer-core::config |
+| `config` | TOML config loading | cartomancer-core::config |
 | `pipeline` | Orchestration state machine | all other modules |
 | `semgrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
 | `llm/` | Provider trait + Ollama + Anthropic | cartomancer-core::finding |

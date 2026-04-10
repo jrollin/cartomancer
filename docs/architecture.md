@@ -46,7 +46,7 @@ ReviewResult (findings + summary, ready for posting)
 | any | any | any | >= 10 | Error (minimum) |
 | any | < threshold | none | < 10 | unchanged |
 
-Default `blast_radius_threshold` = 5 (configurable in `.cartomancer.yaml`).
+Default `blast_radius_threshold` = 5 (configurable in `.cartomancer.toml`).
 
 ## LLM Provider Architecture
 

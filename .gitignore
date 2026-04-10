@@ -8,6 +8,9 @@
 # Embedding cache
 .fastembed_cache/
 
+# Feature specs (working files, deleted after implementation)
+docs/features/
+
 # Config with secrets (users put API keys here)
 .cartomancer.local.toml
 
