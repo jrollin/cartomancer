@@ -380,6 +380,7 @@ dependencies = [
  "cartomancer-core",
  "cartomancer-github",
  "cartomancer-graph",
+ "cartomancer-store",
  "clap",
  "reqwest",
  "serde",

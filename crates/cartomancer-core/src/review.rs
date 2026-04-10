@@ -82,6 +82,7 @@ mod tests {
                 graph_context: None,
                 llm_analysis: None,
                 escalation_reasons: vec![],
+                is_new: None,
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,

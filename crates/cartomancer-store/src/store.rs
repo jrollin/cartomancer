@@ -408,6 +408,7 @@ mod tests {
             graph_context: None,
             llm_analysis: None,
             escalation_reasons: vec![],
+            is_new: None,
         }
     }
 

@@ -11,6 +11,7 @@ mod pipeline;
 mod semgrep;
 mod webhook;
 
+use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -79,9 +80,29 @@ async fn cmd_review(
     let github = GitHubClient::new(&token);
 
     // Run the pipeline
-    let result = pipeline::run_pipeline(config, &github, &token, repo, pr, work_dir).await?;
-    let review = &result.review;
+    let mut result = pipeline::run_pipeline(config, &github, &token, repo, pr, work_dir).await?;
 
+    // Annotate findings as new/existing (US-5) and filter dismissed (US-6)
+    pipeline::annotate_regression(
+        &config.storage.db_path,
+        repo,
+        &result.base_branch,
+        &mut result.review.findings,
+    );
+    pipeline::filter_dismissed(&config.storage.db_path, &mut result.review.findings);
+
+    // Persist scan results (BR-3: best-effort)
+    pipeline::persist_scan(
+        &config.storage.db_path,
+        repo,
+        &result.branch,
+        &result.review.head_sha,
+        "review",
+        Some(pr),
+        &result.review,
+    );
+
+    let review = &result.review;
     if dry_run {
         // Output ReviewResult as JSON, skip posting
         match format {
@@ -308,7 +329,26 @@ async fn cmd_scan(
     // 5. Sort by severity (critical first)
     findings.sort_by(|a, b| b.severity.cmp(&a.severity));
 
-    // 6. Output
+    // 6. Persist scan results (BR-3: best-effort)
+    let review_for_persist = cartomancer_core::review::ReviewResult {
+        pr_number: 0,
+        repo_full_name: git_repo_name(&target).unwrap_or_default(),
+        head_sha: git_head_sha(&target).unwrap_or_default(),
+        findings: findings.clone(),
+        summary: format!("{} findings", findings.len()),
+        status: cartomancer_core::review::ReviewStatus::Completed,
+    };
+    pipeline::persist_scan(
+        &config.storage.db_path,
+        &review_for_persist.repo_full_name,
+        &git_branch(&target).unwrap_or_else(|| "unknown".into()),
+        &review_for_persist.head_sha,
+        "scan",
+        None,
+        &review_for_persist,
+    );
+
+    // 7. Output
     match format {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&findings)?);
@@ -325,6 +365,58 @@ async fn cmd_scan(
     );
 
     Ok(())
+}
+
+/// Get the current git branch name, or None if not in a git repo.
+fn git_branch(dir: &Path) -> Option<String> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Get the current git HEAD SHA, or None if not in a git repo.
+fn git_head_sha(dir: &Path) -> Option<String> {
+    std::process::Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+}
+
+/// Get the remote origin URL as "owner/repo" format, or None.
+fn git_repo_name(dir: &Path) -> Option<String> {
+    std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(dir)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| {
+            let url = String::from_utf8_lossy(&o.stdout).trim().to_string();
+            parse_repo_name(&url)
+        })
+}
+
+/// Extract "owner/repo" from a git remote URL.
+fn parse_repo_name(url: &str) -> Option<String> {
+    let cleaned = url.trim_end_matches(".git");
+    // SSH: git@github.com:owner/repo
+    if cleaned.contains(':') && !cleaned.contains("://") {
+        return cleaned.rsplit(':').next().map(|s| s.to_string());
+    }
+    // HTTPS: https://github.com/owner/repo
+    let parts: Vec<&str> = cleaned.rsplitn(3, '/').collect();
+    if parts.len() >= 2 {
+        Some(format!("{}/{}", parts[1], parts[0]))
+    } else {
+        None
+    }
 }
 
 fn log_severity_summary(label: &str, findings: &[Finding]) {
@@ -420,5 +512,55 @@ fn print_findings(findings: &[Finding]) {
         }
 
         println!();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_repo_name_https() {
+        assert_eq!(
+            parse_repo_name("https://github.com/owner/repo.git"),
+            Some("owner/repo".into())
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_https_no_suffix() {
+        assert_eq!(
+            parse_repo_name("https://github.com/owner/repo"),
+            Some("owner/repo".into())
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_ssh() {
+        assert_eq!(
+            parse_repo_name("git@github.com:owner/repo.git"),
+            Some("owner/repo".into())
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_ssh_no_suffix() {
+        assert_eq!(
+            parse_repo_name("git@github.com:owner/repo"),
+            Some("owner/repo".into())
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_https_with_port() {
+        assert_eq!(
+            parse_repo_name("https://github.com:8080/owner/repo.git"),
+            Some("owner/repo".into())
+        );
+    }
+
+    #[test]
+    fn parse_repo_name_bare_string_returns_none() {
+        assert_eq!(parse_repo_name("noslash"), None);
     }
 }
