@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::severity::Severity;
 
-/// Top-level configuration (deserialized from `.cartomancer.yaml`).
+/// Top-level configuration (deserialized from `.cartomancer.toml`).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default)]
@@ -17,10 +17,24 @@ pub struct AppConfig {
     pub severity: SeverityConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct GitHubConfig {
+    #[serde(skip_serializing)]
     pub webhook_secret: Option<String>,
+    #[serde(skip_serializing)]
     pub token: Option<String>,
+}
+
+impl std::fmt::Debug for GitHubConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitHubConfig")
+            .field(
+                "webhook_secret",
+                &self.webhook_secret.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("token", &self.token.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,16 +63,33 @@ fn default_timeout() -> u64 {
 }
 
 /// LLM provider selection and settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     #[serde(default)]
     pub provider: LlmProvider,
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
+    #[serde(skip_serializing)]
     pub anthropic_api_key: Option<String>,
     pub anthropic_model: Option<String>,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+}
+
+impl std::fmt::Debug for LlmConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlmConfig")
+            .field("provider", &self.provider)
+            .field("ollama_base_url", &self.ollama_base_url)
+            .field("ollama_model", &self.ollama_model)
+            .field(
+                "anthropic_api_key",
+                &self.anthropic_api_key.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("anthropic_model", &self.anthropic_model)
+            .field("max_tokens", &self.max_tokens)
+            .finish()
+    }
 }
 
 impl Default for LlmConfig {

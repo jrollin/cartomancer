@@ -39,7 +39,10 @@ struct ContentBlock {
 impl AnthropicProvider {
     pub fn new(api_key: &str, model: &str, max_tokens: u32) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .expect("failed to build HTTP client"),
             api_key: api_key.to_string(),
             model: model.to_string(),
             max_tokens,

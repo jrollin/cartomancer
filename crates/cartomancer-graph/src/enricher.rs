@@ -54,7 +54,8 @@ impl CartogEnricher {
             .filter_map(|(_, sym)| sym.as_ref().map(|s| s.name.clone()))
             .collect();
 
-        let all_symbols: Vec<&str> = callers.iter().map(|s| s.as_str()).collect();
+        let mut all_symbols: Vec<&str> = callers.iter().map(|s| s.as_str()).collect();
+        all_symbols.push(&name);
         let domain_tags = detect_domain_tags(&all_symbols);
 
         finding.graph_context = Some(GraphContext {

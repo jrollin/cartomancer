@@ -62,6 +62,6 @@ opt-level = 1  # tree-sitter C grammars via cartog compile slowly at level 0
 
 - Webhook secret validation (HMAC-SHA256) for GitHub events
 - API keys via environment variables (not config file): `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`
-- `.cartomancer.local.yaml` gitignored for local secrets
+- `.cartomancer.local.toml` gitignored for local secrets
 - No secrets in logs (tracing filters sensitive fields)
 - cargo-audit and gitleaks in CI pipeline

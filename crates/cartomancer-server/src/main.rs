@@ -196,7 +196,7 @@ async fn cmd_scan(
                 info!(
                     deepened,
                     failed,
-                    skipped = findings.len() as u32 - deepened - failed,
+                    skipped = candidates.len() as u32 - deepened - failed,
                     elapsed_ms = llm_start.elapsed().as_millis() as u64,
                     "LLM deepening complete"
                 );

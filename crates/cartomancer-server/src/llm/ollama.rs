@@ -40,7 +40,10 @@ struct ResponseMessage {
 impl OllamaProvider {
     pub fn new(base_url: &str, model: &str) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(300))
+                .build()
+                .expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
         }

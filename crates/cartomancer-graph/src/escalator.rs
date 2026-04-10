@@ -26,8 +26,8 @@ impl SeverityEscalator {
 
         // Snapshot values from the immutable borrow before mutating.
         let blast_radius = ctx.blast_radius;
-        let has_auth = ctx.domain_tags.contains(&"auth".to_string());
-        let has_payment = ctx.domain_tags.contains(&"payment".to_string());
+        let has_auth = ctx.domain_tags.iter().any(|t| t == "auth");
+        let has_payment = ctx.domain_tags.iter().any(|t| t == "payment");
         let caller_count = ctx.callers.len();
 
         // Large blast radius → escalate to at least Error
