@@ -9,8 +9,19 @@ use rusqlite::Connection;
 pub const CURRENT_VERSION: i32 = 1;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
+///
+/// Returns an error if the database was created by a newer version of cartomancer.
 pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     let version: i32 = conn.pragma_query_value(None, "user_version", |row| row.get(0))?;
+
+    if version > CURRENT_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some(format!(
+                "database schema version {version} is newer than supported version {CURRENT_VERSION}"
+            )),
+        ));
+    }
 
     if version < 1 {
         migrate_v1(conn)?;
@@ -232,5 +243,42 @@ mod tests {
         for col in expected {
             assert!(columns.contains(&col.to_string()), "missing column: {col}");
         }
+    }
+
+    #[test]
+    fn schema_migrate_rejects_future_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate a newer binary having set a higher version
+        conn.pragma_update(None, "user_version", CURRENT_VERSION + 1)
+            .unwrap();
+
+        let result = migrate(&conn);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("newer than supported"),
+            "expected future-version error, got: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn schema_fk_constraints_enforced() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys = ON;").unwrap();
+        migrate(&conn).unwrap();
+
+        // Insert into findings with a non-existent scan_id should fail
+        let result = conn.execute(
+            "INSERT INTO findings (scan_id, fingerprint, rule_id, severity, file_path,
+             start_line, end_line, message, snippet)
+             VALUES (999, 'fp', 'rule', 'error', 'f.rs', 1, 1, 'msg', 'code')",
+            [],
+        );
+        assert!(
+            result.is_err(),
+            "FK constraint should reject non-existent scan_id"
+        );
     }
 }

@@ -511,7 +511,7 @@ fn cmd_findings(
                 println!(
                     "   Scan: {} | Fingerprint: {}…",
                     f.scan_id,
-                    &f.fingerprint[..12]
+                    f.fingerprint.get(..12).unwrap_or(&f.fingerprint)
                 );
                 println!("   {}", f.message);
                 if !f.snippet.is_empty() {
@@ -615,7 +615,7 @@ fn cmd_undismiss(dismissal_id: i64, config: &cartomancer_core::config::AppConfig
     let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
     store
         .undismiss(dismissal_id)
-        .map_err(|_| anyhow::anyhow!("Dismissal ID {dismissal_id} not found."))?;
+        .map_err(|e| anyhow::anyhow!("failed to undismiss {dismissal_id}: {e}"))?;
     println!("Dismissal {dismissal_id} removed.");
     Ok(())
 }

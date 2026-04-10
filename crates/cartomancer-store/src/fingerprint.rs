@@ -1,19 +1,21 @@
 //! Finding fingerprint computation (BR-4, TD-3).
 //!
-//! A fingerprint is the SHA-256 hash of `rule_id:file_path:snippet_content`.
+//! A fingerprint is the SHA-256 hash of length-prefixed `rule_id`, `file_path`, `snippet_content`.
 //! It serves as the stable identity of a finding across scans, used for
 //! regression detection (US-5) and dismissal matching (US-6).
 
 use sha2::{Digest, Sha256};
 
-/// Compute the finding fingerprint: SHA-256 of `rule_id:file_path:snippet`.
+/// Compute the finding fingerprint: SHA-256 of length-prefixed `rule_id`, `file_path`, `snippet`.
+///
+/// Each component is prefixed with its byte length as a little-endian u64,
+/// making the hash immune to delimiter collisions (e.g. `("a:b","c")` vs `("a","b:c")`).
 pub fn compute(rule_id: &str, file_path: &str, snippet: &str) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(rule_id);
-    hasher.update(b":");
-    hasher.update(file_path);
-    hasher.update(b":");
-    hasher.update(snippet);
+    for component in [rule_id, file_path, snippet] {
+        hasher.update((component.len() as u64).to_le_bytes());
+        hasher.update(component.as_bytes());
+    }
     format!("{:x}", hasher.finalize())
 }
 
@@ -60,6 +62,14 @@ mod tests {
     fn fingerprint_changes_with_snippet() {
         let fp1 = compute("rule-a", "src/main.rs", "let x = 1;");
         let fp2 = compute("rule-a", "src/main.rs", "let x = 2;");
+        assert_ne!(fp1, fp2);
+    }
+
+    #[test]
+    fn fingerprint_no_delimiter_collision() {
+        // "a:b" as rule_id + "c" as file vs "a" as rule_id + "b:c" as file
+        let fp1 = compute("a:b", "c", "d");
+        let fp2 = compute("a", "b:c", "d");
         assert_ne!(fp1, fp2);
     }
 
