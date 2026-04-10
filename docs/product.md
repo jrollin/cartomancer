@@ -1,0 +1,52 @@
+# Cartomancer — Product Overview
+
+> PR review with blast radius awareness.
+
+## Purpose
+
+Cartomancer is an automated PR review tool that combines static analysis with code graph intelligence to produce structurally-aware, severity-escalated review comments on GitHub pull requests.
+
+## Core Insight
+
+Static analysis finds bugs. Blast radius tells you which bugs matter.
+
+A SQL injection in a dead function is noise. A SQL injection reachable from 47 callers including your auth endpoint is critical. Cartomancer is the bridge between "this pattern matches" and "this matters because it affects your payment flow."
+
+## Target Users
+
+- **Engineering teams** using GitHub PRs who want automated review beyond linting
+- **Security teams** wanting triage that accounts for code reachability
+- **Open-source maintainers** reviewing contributions from external contributors
+
+## Key Features
+
+- **Semgrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`
+- **Blast radius via cartog**: transitive impact analysis, caller graphs, domain detection
+- **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius
+- **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production)
+- **GitHub PR comments**: inline comments with blast radius context + summary comment
+
+## Pipeline
+
+```
+GitHub webhook → fetch diff → semgrep scan → cartog enrich
+  → escalate severity → LLM deepen (conditional) → post comments
+```
+
+## Positioning
+
+| Tool | Strength | Gap Cartomancer fills |
+|------|----------|----------------------|
+| CodeRabbit | LLM reviews + learning | No structural graph, no blast radius |
+| SonarQube | Taint analysis + rules | No LLM, no graph awareness, no PR-native |
+| Semgrep | Best open rule ecosystem | No blast radius, no severity escalation |
+| Claude Code review | Zero-setup LLM review | No persistent graph, no rule backbone |
+
+Cartomancer is not a replacement for any of these. It adds blast-radius-aware severity escalation on top of Semgrep findings, powered by cartog.
+
+## Non-Goals
+
+- Not a CI runner or test framework
+- Not a code formatter or style enforcer
+- Not a full SAST platform (no taint analysis in v1)
+- Not a dashboard or metrics tool (v1 is CLI + webhook only)

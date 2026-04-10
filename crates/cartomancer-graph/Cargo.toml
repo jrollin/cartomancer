@@ -1,0 +1,14 @@
+[package]
+name = "cartomancer-graph"
+description = "Cartog integration and severity escalation for Cartomancer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cartomancer-core = { workspace = true }
+cartog = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }

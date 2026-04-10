@@ -1,0 +1,17 @@
+[package]
+name = "cartomancer-github"
+description = "GitHub API integration for Cartomancer (diff fetch, PR comments, webhooks)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cartomancer-core = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tokio = { workspace = true }

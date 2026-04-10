@@ -1,0 +1,18 @@
+# Cartomancer configuration
+# Copy to .cartomancer.local.toml for secrets (gitignored).
+
+[semgrep]
+rules = ["auto"]
+timeout_seconds = 120
+
+[llm]
+provider = "ollama"
+ollama_base_url = "http://localhost:11434"
+ollama_model = "gemma4"
+# anthropic_api_key = "sk-ant-..."  # prefer ANTHROPIC_API_KEY env var
+anthropic_model = "claude-sonnet-4-20250514"
+max_tokens = 4096
+
+[severity]
+blast_radius_threshold = 5
+llm_deepening_threshold = "error"

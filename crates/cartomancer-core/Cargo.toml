@@ -1,0 +1,16 @@
+[package]
+name = "cartomancer-core"
+description = "Domain model types for Cartomancer PR review pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+toml = { workspace = true }
