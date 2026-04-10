@@ -14,6 +14,7 @@ ollama_model = "gemma4"
 # anthropic_api_key = "sk-ant-..."  # prefer ANTHROPIC_API_KEY env var
 anthropic_model = "claude-sonnet-4-20250514"
 max_tokens = 4096
+# max_concurrent_deepening = 4  # concurrent LLM requests (default: 4)
 
 [severity]
 blast_radius_threshold = 5

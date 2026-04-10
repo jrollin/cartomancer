@@ -70,7 +70,7 @@ pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
 }
 
 /// Build the deepening prompt for a finding with its graph context.
-fn build_deepening_prompt(finding: &Finding) -> String {
+pub fn build_deepening_prompt(finding: &Finding) -> String {
     let mut prompt = format!(
         "Analyze this code finding and explain its impact.\n\n\
          ## Finding\n\

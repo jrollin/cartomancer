@@ -82,6 +82,9 @@ pub struct LlmConfig {
     pub anthropic_model: Option<String>,
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// Max concurrent LLM requests for finding deepening.
+    #[serde(default = "default_max_concurrent_deepening")]
+    pub max_concurrent_deepening: usize,
 }
 
 impl std::fmt::Debug for LlmConfig {
@@ -96,6 +99,7 @@ impl std::fmt::Debug for LlmConfig {
             )
             .field("anthropic_model", &self.anthropic_model)
             .field("max_tokens", &self.max_tokens)
+            .field("max_concurrent_deepening", &self.max_concurrent_deepening)
             .finish()
     }
 }
@@ -109,12 +113,17 @@ impl Default for LlmConfig {
             anthropic_api_key: None,
             anthropic_model: None,
             max_tokens: default_max_tokens(),
+            max_concurrent_deepening: default_max_concurrent_deepening(),
         }
     }
 }
 
 fn default_max_tokens() -> u32 {
     4096
+}
+
+fn default_max_concurrent_deepening() -> usize {
+    4
 }
 
 /// Supported LLM backends.
@@ -183,6 +192,7 @@ mod tests {
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
+        assert_eq!(config.llm.max_concurrent_deepening, 4);
     }
 
     #[test]
@@ -207,5 +217,26 @@ jobs = 4
             vec![".github/", "config/database.yml"]
         );
         assert_eq!(config.semgrep.jobs, Some(4));
+    }
+
+    #[test]
+    fn deserialize_llm_concurrency() {
+        let toml_str = r#"
+[llm]
+provider = "ollama"
+max_concurrent_deepening = 8
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.llm.max_concurrent_deepening, 8);
+    }
+
+    #[test]
+    fn llm_concurrency_defaults_to_4() {
+        let toml_str = r#"
+[llm]
+provider = "ollama"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.llm.max_concurrent_deepening, 4);
     }
 }

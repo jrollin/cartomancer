@@ -10,9 +10,11 @@
 //! 7. Build ReviewResult
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
+use tokio::sync::Semaphore;
 use tracing::{info, warn};
 
 use cartomancer_core::config::AppConfig;
@@ -317,7 +319,7 @@ fn enrich_findings(work_path: &Path, config: &AppConfig, findings: &mut [Finding
     }
 }
 
-/// LLM-deepen qualifying findings.
+/// LLM-deepen qualifying findings with bounded concurrency.
 async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
     let threshold = config.severity.llm_deepening_threshold;
     let candidates: Vec<usize> = findings
@@ -338,43 +340,68 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
         return;
     }
 
-    match llm::create_provider(&config.llm) {
-        Ok(provider) => {
-            info!(
-                provider = provider.name(),
-                candidates = candidates.len(),
-                "starting LLM deepening"
-            );
-            let mut deepened = 0u32;
-            let mut failed = 0u32;
-            for idx in &candidates {
-                let finding = &mut findings[*idx];
-                match provider.deepen(finding).await {
-                    Ok(()) => {
-                        deepened += 1;
-                    }
-                    Err(e) => {
-                        warn!(
-                            rule = %finding.rule_id,
-                            file = %finding.file_path,
-                            err = %e,
-                            "LLM deepening failed, skipping"
-                        );
-                        failed += 1;
-                    }
-                }
-            }
-            info!(
-                deepened,
-                failed,
-                skipped = (candidates.len() as u32).saturating_sub(deepened + failed),
-                "LLM deepening complete"
-            );
-        }
+    let provider: Arc<dyn llm::LlmProvider> = match llm::create_provider(&config.llm) {
+        Ok(p) => Arc::from(p),
         Err(e) => {
             warn!(err = %e, "could not create LLM provider, skipping deepening");
+            return;
+        }
+    };
+
+    let concurrency = config.llm.max_concurrent_deepening;
+    info!(
+        provider = provider.name(),
+        candidates = candidates.len(),
+        concurrency,
+        "starting LLM deepening"
+    );
+
+    // Build prompts upfront (cheap, no async needed)
+    let tasks: Vec<(usize, String)> = candidates
+        .iter()
+        .map(|&idx| (idx, llm::build_deepening_prompt(&findings[idx])))
+        .collect();
+
+    // Fire concurrent LLM requests with bounded concurrency
+    let semaphore = Arc::new(Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(tasks.len());
+
+    for (idx, prompt) in tasks {
+        let provider = Arc::clone(&provider);
+        let sem = Arc::clone(&semaphore);
+        handles.push(tokio::spawn(async move {
+            let _permit = sem.acquire().await.expect("semaphore closed unexpectedly");
+            let result = provider.complete(&prompt).await;
+            (idx, result)
+        }));
+    }
+
+    // Collect results and apply back to findings
+    let mut deepened = 0u32;
+    let mut failed = 0u32;
+    for handle in handles {
+        match handle.await {
+            Ok((idx, Ok(analysis))) => {
+                findings[idx].llm_analysis = Some(analysis);
+                deepened += 1;
+            }
+            Ok((idx, Err(e))) => {
+                warn!(
+                    rule = %findings[idx].rule_id,
+                    file = %findings[idx].file_path,
+                    err = %e,
+                    "LLM deepening failed, skipping"
+                );
+                failed += 1;
+            }
+            Err(e) => {
+                warn!(err = %e, "LLM deepening task panicked");
+                failed += 1;
+            }
         }
     }
+
+    info!(deepened, failed, "LLM deepening complete");
 }
 
 #[cfg(test)]
