@@ -1,5 +1,9 @@
 # Cartomancer
 
+[![CI](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml/badge.svg)](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/jrollin/cartomancer/branch/main/graph/badge.svg)](https://codecov.io/gh/jrollin/cartomancer)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > PR review with blast radius awareness.
 
 Cartomancer combines [opengrep](https://github.com/opengrep/opengrep) static analysis with [cartog](https://github.com/jrollin/cartog) code graph intelligence to produce severity-escalated, structurally-aware review comments on GitHub pull requests.
