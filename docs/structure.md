@@ -10,7 +10,11 @@ cartomancer/
 ├── deny.toml                           # cargo-deny policy
 ├── rustfmt.toml                        # format config
 ├── .gitignore
-├── .github/workflows/ci.yml            # CI pipeline
+├── .github/workflows/
+│   ├── ci.yml                          # CI pipeline
+│   └── release.yml                     # build + publish on v* tags
+├── scripts/
+│   └── release.sh                      # version bump, tag, push
 ├── docs/
 │   ├── product.md                      # purpose, users, features
 │   ├── tech.md                         # stack, deps, constraints

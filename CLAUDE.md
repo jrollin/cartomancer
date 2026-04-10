@@ -77,3 +77,5 @@ cartomancer serve [--port <n>]                    # not yet implemented
 - Tests: co-located `#[cfg(test)]` for unit, `tests/` for integration
 - Config: `.cartomancer.toml` for defaults, env vars for secrets
 - CI: check, fmt, clippy, test, coverage, audit, secrets scan, deny
+- Release: `scripts/release.sh <major|minor|patch>` → bumps version, tags, pushes
+- Publish: GitHub Actions on `v*` tag → build binaries, GitHub Release, crates.io (dependency order with 60s sleep)
