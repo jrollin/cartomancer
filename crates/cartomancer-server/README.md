@@ -46,6 +46,10 @@ Create `.cartomancer.toml` in your project root:
 [opengrep]
 rules = ["auto"]
 timeout_seconds = 120
+# taint_intrafile = false       # cross-function taint analysis
+# enclosing_context = false     # surrounding function in findings (improves LLM deepening)
+# ignore_pattern = "nosec"      # custom inline ignore annotation
+# dynamic_timeout = false       # file-size-scaled timeouts
 
 [llm]
 provider = "ollama"

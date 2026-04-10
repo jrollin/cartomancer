@@ -78,7 +78,7 @@ cartomancer serve [--port <n>]                    # not yet implemented
 
 ## External Dependencies
 
-- **Opengrep**: must be in PATH, invoked as subprocess
+- **Opengrep**: must be in PATH, invoked as subprocess. Supports opengrep-specific flags: `--taint-intrafile`, `--opengrep-ignore-pattern`, `--output-enclosing-context`, `--dynamic-timeout`
 - **Ollama**: optional, local LLM at `http://localhost:11434/api/chat`
 - **Anthropic API**: optional, production LLM at `https://api.anthropic.com/v1/messages`
 - **cartog**: compiled in as Rust crate, SQLite-based code graph

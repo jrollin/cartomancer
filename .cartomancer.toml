@@ -6,6 +6,12 @@ rules = ["auto"]
 timeout_seconds = 120
 # exclude = [".github/", "config/database.yml", "etc/absences/"]
 # jobs = 4  # optional, defaults to opengrep auto-detection (~num CPUs)
+# taint_intrafile = false       # cross-function taint analysis within files
+# ignore_pattern = "nosec"      # custom inline ignore annotation
+# enclosing_context = false     # add surrounding function/class to findings (improves LLM deepening)
+# dynamic_timeout = false       # file-size-scaled timeouts instead of flat timeout_seconds
+# dynamic_timeout_unit_kb = 10  # base timeout unit in KB (only when dynamic_timeout = true)
+# dynamic_timeout_max_multiplier = 5.0  # max multiplier (only when dynamic_timeout = true)
 
 [llm]
 provider = "ollama"

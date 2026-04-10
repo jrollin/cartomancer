@@ -25,7 +25,7 @@ Rust (single binary, performance, native cartog integration).
 
 | Tool | Integration | Required |
 |------|------------|----------|
-| Opengrep | Subprocess (`opengrep scan --json`) | Yes (must be in PATH) |
+| Opengrep | Subprocess (`opengrep scan --json`). Opt-in features: `--taint-intrafile`, `--output-enclosing-context`, `--dynamic-timeout`, `--opengrep-ignore-pattern` | Yes (must be in PATH) |
 | Ollama | HTTP API (`/api/chat`) | Optional (default LLM for local dev) |
 | Anthropic API | HTTP API (`/v1/messages`) | Optional (production LLM) |
 | cartog | Rust crate (compiled in) | Built-in |

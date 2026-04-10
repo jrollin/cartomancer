@@ -120,6 +120,7 @@ Triggered only when:
 
 Prompt includes:
 - Finding details (rule, message, severity, file, code snippet)
+- Enclosing function/class body (when `enclosing_context = true` in config)
 - Structural context from cartog (symbol name, blast radius, callers list, domain tags)
 - Task: explain real-world impact in 2-3 sentences
 

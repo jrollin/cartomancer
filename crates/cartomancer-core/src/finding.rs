@@ -26,6 +26,9 @@ pub struct Finding {
     /// `None` when regression detection was not performed.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_new: Option<bool>,
+    /// Enclosing function/class body from opengrep `--output-enclosing-context`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enclosing_context: Option<String>,
 }
 
 /// Blast radius and caller context from cartog.
@@ -58,6 +61,7 @@ mod tests {
             llm_analysis: None,
             escalation_reasons: vec![],
             is_new: None,
+            enclosing_context: None,
         };
         assert!(f.graph_context.is_none());
         assert!(f.llm_analysis.is_none());

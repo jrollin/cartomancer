@@ -20,7 +20,7 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 
 ## Key Features
 
-- **Opengrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`
+- **Opengrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`, cross-function taint analysis, enclosing context for LLM deepening
 - **Blast radius via cartog**: transitive impact analysis, caller graphs, domain detection
 - **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius
 - **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production)

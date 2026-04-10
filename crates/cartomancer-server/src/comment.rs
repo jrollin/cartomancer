@@ -133,6 +133,7 @@ mod tests {
             llm_analysis: None,
             escalation_reasons: vec![],
             is_new: None,
+            enclosing_context: None,
         }
     }
 

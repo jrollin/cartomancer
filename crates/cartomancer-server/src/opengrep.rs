@@ -42,6 +42,8 @@ struct Extra {
     lines: String,
     #[serde(default)]
     metadata: Metadata,
+    #[serde(default)]
+    enclosing_context: Option<String>,
 }
 
 #[derive(serde::Deserialize, Default)]
@@ -65,12 +67,23 @@ fn build_command(
     baseline_commit: Option<&str>,
 ) -> Command {
     let mut cmd = Command::new("opengrep");
-    cmd.arg("scan")
-        .arg("--json")
-        .arg("--quiet")
-        .arg("--timeout")
-        .arg(config.timeout_seconds.to_string())
-        .current_dir(target_dir);
+    cmd.arg("scan").arg("--json").arg("--quiet");
+
+    if config.dynamic_timeout {
+        cmd.arg("--dynamic-timeout");
+        if let Some(unit_kb) = config.dynamic_timeout_unit_kb {
+            cmd.arg("--dynamic-timeout-unit-kb")
+                .arg(unit_kb.to_string());
+        }
+        if let Some(max_mult) = config.dynamic_timeout_max_multiplier {
+            cmd.arg("--dynamic-timeout-max-multiplier")
+                .arg(max_mult.to_string());
+        }
+    } else {
+        cmd.arg("--timeout").arg(config.timeout_seconds.to_string());
+    }
+
+    cmd.current_dir(target_dir);
 
     for rule in &config.rules {
         cmd.arg("--config").arg(rule);
@@ -84,6 +97,18 @@ fn build_command(
         cmd.arg("-j").arg(jobs.to_string());
     }
 
+    if config.taint_intrafile {
+        cmd.arg("--taint-intrafile");
+    }
+
+    if let Some(ref pattern) = config.ignore_pattern {
+        cmd.arg(format!("--opengrep-ignore-pattern={pattern}"));
+    }
+
+    if config.enclosing_context {
+        cmd.arg("--experimental").arg("--output-enclosing-context");
+    }
+
     if let Some(sha) = baseline_commit {
         cmd.arg("--baseline-commit").arg(sha);
     }
@@ -93,10 +118,20 @@ fn build_command(
 
 /// Format the command for debug logging.
 fn format_command_display(config: &OpengrepConfig, baseline_commit: Option<&str>) -> String {
-    let mut parts = vec![format!(
-        "opengrep scan --json --quiet --timeout {}",
-        config.timeout_seconds
-    )];
+    let mut parts = vec!["opengrep scan --json --quiet".to_string()];
+
+    if config.dynamic_timeout {
+        parts.push("--dynamic-timeout".to_string());
+        if let Some(unit_kb) = config.dynamic_timeout_unit_kb {
+            parts.push(format!("--dynamic-timeout-unit-kb {unit_kb}"));
+        }
+        if let Some(max_mult) = config.dynamic_timeout_max_multiplier {
+            parts.push(format!("--dynamic-timeout-max-multiplier {max_mult}"));
+        }
+    } else {
+        parts.push(format!("--timeout {}", config.timeout_seconds));
+    }
+
     for r in &config.rules {
         parts.push(format!("--config {r}"));
     }
@@ -105,6 +140,15 @@ fn format_command_display(config: &OpengrepConfig, baseline_commit: Option<&str>
     }
     if let Some(jobs) = config.jobs {
         parts.push(format!("-j {jobs}"));
+    }
+    if config.taint_intrafile {
+        parts.push("--taint-intrafile".to_string());
+    }
+    if let Some(ref pattern) = config.ignore_pattern {
+        parts.push(format!("--opengrep-ignore-pattern={pattern}"));
+    }
+    if config.enclosing_context {
+        parts.push("--experimental --output-enclosing-context".to_string());
     }
     if let Some(sha) = baseline_commit {
         parts.push(format!("--baseline-commit {sha}"));
@@ -211,6 +255,7 @@ fn parse_output(output: &[u8], elapsed: Duration) -> Result<Vec<Finding>> {
             llm_analysis: None,
             escalation_reasons: vec![],
             is_new: None,
+            enclosing_context: r.extra.enclosing_context,
         })
         .collect();
 
@@ -284,6 +329,7 @@ mod tests {
             timeout_seconds: 60,
             exclude,
             jobs,
+            ..OpengrepConfig::default()
         }
     }
 
@@ -344,5 +390,77 @@ mod tests {
             display,
             "opengrep scan --json --quiet --timeout 120 --config auto"
         );
+    }
+
+    #[test]
+    fn build_command_with_taint_intrafile() {
+        let cfg = OpengrepConfig {
+            taint_intrafile: true,
+            ..config_with(vec![], None)
+        };
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--taint-intrafile")));
+    }
+
+    #[test]
+    fn build_command_with_ignore_pattern() {
+        let cfg = OpengrepConfig {
+            ignore_pattern: Some("nosec".into()),
+            ..config_with(vec![], None)
+        };
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--opengrep-ignore-pattern=nosec")));
+    }
+
+    #[test]
+    fn build_command_with_enclosing_context() {
+        let cfg = OpengrepConfig {
+            enclosing_context: true,
+            ..config_with(vec![], None)
+        };
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--experimental")));
+        assert!(args.contains(&std::ffi::OsStr::new("--output-enclosing-context")));
+    }
+
+    #[test]
+    fn build_command_with_dynamic_timeout() {
+        let cfg = OpengrepConfig {
+            dynamic_timeout: true,
+            ..config_with(vec![], None)
+        };
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
+        assert!(!args.contains(&std::ffi::OsStr::new("--timeout")));
+    }
+
+    #[test]
+    fn build_command_with_dynamic_timeout_all_options() {
+        let cfg = OpengrepConfig {
+            dynamic_timeout: true,
+            dynamic_timeout_unit_kb: Some(10),
+            dynamic_timeout_max_multiplier: Some(5.0),
+            ..config_with(vec![], None)
+        };
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
+        assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout-unit-kb")));
+        assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout-max-multiplier")));
+    }
+
+    #[test]
+    fn build_command_default_omits_new_flags() {
+        let cfg = OpengrepConfig::default();
+        let cmd = build_command("/tmp", &cfg, None);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(!args.contains(&std::ffi::OsStr::new("--taint-intrafile")));
+        assert!(!args.contains(&std::ffi::OsStr::new("--experimental")));
+        assert!(!args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
+        assert!(args.contains(&std::ffi::OsStr::new("--timeout")));
     }
 }

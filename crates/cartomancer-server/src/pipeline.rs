@@ -607,6 +607,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,
@@ -715,6 +716,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }
         }
 
@@ -835,6 +837,7 @@ mod tests {
                 llm_analysis: None,
                 escalation_reasons: vec![],
                 is_new: None,
+                enclosing_context: None,
             }
         }
 

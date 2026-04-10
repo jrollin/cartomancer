@@ -87,6 +87,10 @@ pub fn build_deepening_prompt(finding: &Finding) -> String {
         finding.snippet,
     );
 
+    if let Some(enclosing) = &finding.enclosing_context {
+        prompt.push_str(&format!("\n## Enclosing Function\n```\n{enclosing}\n```\n"));
+    }
+
     if let Some(ctx) = &finding.graph_context {
         prompt.push_str(&format!(
             "\n## Structural Context\n\
@@ -113,4 +117,54 @@ pub fn build_deepening_prompt(finding: &Finding) -> String {
     );
 
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cartomancer_core::severity::Severity;
+
+    fn make_finding() -> Finding {
+        Finding {
+            rule_id: "test.rule".into(),
+            message: "test message".into(),
+            severity: Severity::Error,
+            file_path: "src/lib.rs".into(),
+            start_line: 10,
+            end_line: 12,
+            snippet: "let x = dangerous();".into(),
+            cwe: None,
+            graph_context: None,
+            llm_analysis: None,
+            escalation_reasons: vec![],
+            is_new: None,
+            enclosing_context: None,
+        }
+    }
+
+    #[test]
+    fn build_prompt_includes_finding_details() {
+        let f = make_finding();
+        let prompt = build_deepening_prompt(&f);
+        assert!(prompt.contains("test.rule"));
+        assert!(prompt.contains("test message"));
+        assert!(prompt.contains("src/lib.rs:10"));
+        assert!(prompt.contains("let x = dangerous();"));
+    }
+
+    #[test]
+    fn build_prompt_with_enclosing_context() {
+        let mut f = make_finding();
+        f.enclosing_context = Some("fn handler() {\n    let x = dangerous();\n}".into());
+        let prompt = build_deepening_prompt(&f);
+        assert!(prompt.contains("## Enclosing Function"));
+        assert!(prompt.contains("fn handler()"));
+    }
+
+    #[test]
+    fn build_prompt_without_enclosing_context() {
+        let f = make_finding();
+        let prompt = build_deepening_prompt(&f);
+        assert!(!prompt.contains("Enclosing Function"));
+    }
 }
