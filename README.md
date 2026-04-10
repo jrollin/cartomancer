@@ -10,7 +10,8 @@ Cartomancer combines [Semgrep](https://semgrep.dev/) static analysis with [carto
 
 ```
 GitHub webhook → fetch diff → semgrep scan → cartog enrich
-  → escalate severity → LLM deepen (conditional) → post comments
+  → escalate severity → LLM deepen (conditional)
+  → regression check → dismiss filter → persist + post comments
 ```
 
 ## Prerequisites
@@ -47,7 +48,23 @@ cp .cartomancer.toml .cartomancer.local.toml
 # Edit .cartomancer.local.toml with your GitHub token
 
 # Review a PR (one-shot)
-cartomancer-server review --repo owner/repo --pr 42
+cartomancer-server review owner/repo 42
+
+# Browse scan history
+cartomancer-server history
+
+# Browse findings from a scan
+cartomancer-server findings 1
+
+# Search findings across all scans
+cartomancer-server findings --rule sql --severity error
+
+# Dismiss a false positive (finding #3 from scan 1)
+cartomancer-server dismiss 1 3 --reason "false positive"
+
+# List and remove dismissals
+cartomancer-server dismissed
+cartomancer-server undismiss 1
 
 # Start webhook server
 cartomancer-server serve --port 3000
@@ -69,6 +86,7 @@ Key environment variables:
 | `cartomancer-core` | Domain model: Finding, Severity, GraphContext, config types |
 | `cartomancer-graph` | cartog integration + severity escalation (the moat) |
 | `cartomancer-github` | GitHub API: diff fetch, PR comments, webhook parsing |
+| `cartomancer-store` | SQLite persistence: scan history, finding storage, dismissals |
 | `cartomancer-server` | Binary: pipeline orchestration, CLI, webhook, LLM providers |
 
 See [docs/structure.md](docs/structure.md) for the full layout.

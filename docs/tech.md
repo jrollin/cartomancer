@@ -18,6 +18,8 @@ Rust (single binary, performance, native cartog integration).
 | thiserror | 2 | Domain error types |
 | anyhow | 1 | Application error propagation |
 | async-trait | 0.1 | Async trait for LLM provider abstraction |
+| rusqlite | 0.39 | SQLite database access (finding persistence) |
+| sha2 | 0.10 | SHA-256 fingerprint computation for finding identity |
 
 ## External Tools
 
@@ -36,6 +38,8 @@ Rust (single binary, performance, native cartog integration).
 | Raw reqwest for GitHub API | Avoids octocrab dependency; GitHub REST API is simple enough |
 | cartog from crates.io | Native Rust integration, no subprocess overhead for graph queries |
 | LLM provider trait | Supports local Ollama for testing, Anthropic for production |
+| rusqlite directly (no ORM) | Simple schema (4 tables), fast enough synchronous, already a transitive dep via cartog |
+| PRAGMA user_version for schema migrations | Built-in SQLite integer, no extra migration table for a single-user embedded DB |
 | axum for webhook | Lightweight, tokio-native, matches cartog conventions |
 | Single binary | Simplifies deployment, air-gapped environments |
 

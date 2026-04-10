@@ -27,6 +27,9 @@ use cartomancer_github::types::PrMetadata;
 use cartomancer_graph::enricher::CartogEnricher;
 use cartomancer_graph::escalator::SeverityEscalator;
 
+use cartomancer_store::store::Store;
+use cartomancer_store::types::ScanRecord;
+
 use crate::comment;
 use crate::llm;
 use crate::semgrep;
@@ -36,6 +39,10 @@ pub struct PipelineResult {
     pub review: ReviewResult,
     /// Parsed diff — reused for inline comment placement without refetching.
     pub diff: PullRequestDiff,
+    /// PR branch name (head_ref) — used for scan persistence.
+    pub branch: String,
+    /// Base branch name (base_ref) — used for regression comparison.
+    pub base_branch: String,
     /// Temp dir handle — kept alive until review is posted, then dropped for cleanup.
     /// None if --work-dir was used.
     #[allow(dead_code)]
@@ -98,6 +105,8 @@ pub async fn run_pipeline(
     );
 
     if findings.is_empty() {
+        let branch = pr_meta.head_ref.clone();
+        let base_branch = pr_meta.base_ref.clone();
         let review = ReviewResult {
             pr_number,
             repo_full_name: repo.to_string(),
@@ -109,6 +118,8 @@ pub async fn run_pipeline(
         return Ok(PipelineResult {
             review,
             diff,
+            branch,
+            base_branch,
             temp_dir,
         });
     }
@@ -128,6 +139,8 @@ pub async fn run_pipeline(
 
     // 9. Build ReviewResult
     let summary = comment::format_summary(&findings, pipeline_start.elapsed(), rule_count);
+    let branch = pr_meta.head_ref;
+    let base_branch = pr_meta.base_ref;
     let review = ReviewResult {
         pr_number,
         repo_full_name: repo.to_string(),
@@ -140,6 +153,8 @@ pub async fn run_pipeline(
     Ok(PipelineResult {
         review,
         diff,
+        branch,
+        base_branch,
         temp_dir,
     })
 }
@@ -404,6 +419,140 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
     info!(deepened, failed, "LLM deepening complete");
 }
 
+/// Persist a scan/review result to the store (BR-3: best-effort, never blocks pipeline).
+pub fn persist_scan(
+    db_path: &str,
+    repo: &str,
+    branch: &str,
+    commit_sha: &str,
+    command: &str,
+    pr_number: Option<u64>,
+    review: &cartomancer_core::review::ReviewResult,
+) {
+    let store = match Store::open(db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!(path = db_path, err = %e, "failed to open store — scan not persisted");
+            return;
+        }
+    };
+
+    let record = ScanRecord {
+        id: None,
+        repo: repo.to_string(),
+        branch: branch.to_string(),
+        commit_sha: commit_sha.to_string(),
+        command: command.to_string(),
+        pr_number,
+        finding_count: review.findings.len() as u32,
+        summary: review.summary.clone(),
+        created_at: None,
+    };
+
+    let scan_id = match store.insert_scan(&record) {
+        Ok(id) => id,
+        Err(e) => {
+            warn!(err = %e, "failed to insert scan record — scan not persisted");
+            return;
+        }
+    };
+
+    if !review.findings.is_empty() {
+        if let Err(e) = store.insert_findings(scan_id, &review.findings) {
+            warn!(err = %e, "failed to insert findings — findings not persisted");
+        }
+    }
+
+    info!(
+        scan_id,
+        findings = review.findings.len(),
+        "scan persisted to store"
+    );
+}
+
+/// Annotate findings as "new" or "existing" by comparing fingerprints against
+/// the base branch baseline (US-5, BR-4). Best-effort: if the store is unavailable,
+/// all findings are treated as new.
+pub fn annotate_regression(
+    db_path: &str,
+    repo: &str,
+    base_branch: &str,
+    findings: &mut [Finding],
+) -> (usize, usize) {
+    let baseline = match Store::open(db_path) {
+        Ok(store) => match store.baseline_fingerprints(repo, base_branch) {
+            Ok(fps) => fps,
+            Err(e) => {
+                warn!(err = %e, "failed to load baseline — all findings treated as new");
+                std::collections::HashSet::new()
+            }
+        },
+        Err(e) => {
+            warn!(err = %e, "failed to open store for regression check — all findings treated as new");
+            std::collections::HashSet::new()
+        }
+    };
+
+    let mut new_count = 0;
+    let mut existing_count = 0;
+
+    for finding in findings.iter_mut() {
+        let fp = cartomancer_store::fingerprint::compute(
+            &finding.rule_id,
+            &finding.file_path,
+            &finding.snippet,
+        );
+        if baseline.contains(&fp) {
+            finding.is_new = Some(false);
+            existing_count += 1;
+        } else {
+            finding.is_new = Some(true);
+            new_count += 1;
+        }
+    }
+
+    info!(
+        new = new_count,
+        existing = existing_count,
+        "regression annotation complete"
+    );
+    (new_count, existing_count)
+}
+
+/// Filter out dismissed findings (BR-1: same fingerprint in dismissals table).
+/// Best-effort: if the store is unavailable, no filtering is applied.
+pub fn filter_dismissed(db_path: &str, findings: &mut Vec<Finding>) -> usize {
+    let dismissed = match Store::open(db_path) {
+        Ok(store) => match store.dismissed_fingerprints() {
+            Ok(fps) => fps,
+            Err(e) => {
+                warn!(err = %e, "failed to load dismissed fingerprints — no filtering applied");
+                return 0;
+            }
+        },
+        Err(e) => {
+            warn!(err = %e, "failed to open store for dismissal check — no filtering applied");
+            return 0;
+        }
+    };
+
+    if dismissed.is_empty() {
+        return 0;
+    }
+
+    let before = findings.len();
+    findings.retain(|f| {
+        let fp = cartomancer_store::fingerprint::compute(&f.rule_id, &f.file_path, &f.snippet);
+        !dismissed.contains(&fp)
+    });
+    let filtered = before - findings.len();
+
+    if filtered > 0 {
+        info!(filtered, "dismissed findings removed");
+    }
+    filtered
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -436,6 +585,347 @@ mod tests {
     }
 
     #[test]
+    fn pipeline_persist_scan_writes_to_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db_str = db_path.to_str().unwrap();
+
+        let review = ReviewResult {
+            pr_number: 42,
+            repo_full_name: "owner/repo".into(),
+            head_sha: "abc123".into(),
+            findings: vec![cartomancer_core::finding::Finding {
+                rule_id: "test-rule".into(),
+                message: "test finding".into(),
+                severity: cartomancer_core::severity::Severity::Warning,
+                file_path: "src/lib.rs".into(),
+                start_line: 10,
+                end_line: 12,
+                snippet: "let x = 1;".into(),
+                cwe: None,
+                graph_context: None,
+                llm_analysis: None,
+                escalation_reasons: vec![],
+                is_new: None,
+            }],
+            summary: "1 finding".into(),
+            status: ReviewStatus::Completed,
+        };
+
+        persist_scan(
+            db_str,
+            "owner/repo",
+            "main",
+            "abc123",
+            "review",
+            Some(42),
+            &review,
+        );
+
+        // Verify it was written
+        let store = Store::open(db_str).unwrap();
+        let scans = store
+            .list_scans(&cartomancer_store::types::ScanFilter::default())
+            .unwrap();
+        assert_eq!(scans.len(), 1);
+        assert_eq!(scans[0].repo, "owner/repo");
+        assert_eq!(scans[0].branch, "main");
+        assert_eq!(scans[0].commit_sha, "abc123");
+        assert_eq!(scans[0].command, "review");
+        assert_eq!(scans[0].pr_number, Some(42));
+        assert_eq!(scans[0].finding_count, 1);
+
+        let findings = store.get_findings(scans[0].id.unwrap()).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule_id, "test-rule");
+    }
+
+    #[test]
+    fn pipeline_persist_scan_empty_findings() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        let db_str = db_path.to_str().unwrap();
+
+        let review = ReviewResult {
+            pr_number: 1,
+            repo_full_name: "owner/repo".into(),
+            head_sha: "def456".into(),
+            findings: vec![],
+            summary: "clean".into(),
+            status: ReviewStatus::Completed,
+        };
+
+        persist_scan(
+            db_str,
+            "owner/repo",
+            "main",
+            "def456",
+            "scan",
+            None,
+            &review,
+        );
+
+        let store = Store::open(db_str).unwrap();
+        let scans = store
+            .list_scans(&cartomancer_store::types::ScanFilter::default())
+            .unwrap();
+        assert_eq!(scans.len(), 1);
+        assert_eq!(scans[0].finding_count, 0);
+        assert!(scans[0].pr_number.is_none());
+    }
+
+    #[test]
+    fn pipeline_persist_scan_bad_path_does_not_panic() {
+        let review = ReviewResult {
+            pr_number: 1,
+            repo_full_name: "owner/repo".into(),
+            head_sha: "abc".into(),
+            findings: vec![],
+            summary: "clean".into(),
+            status: ReviewStatus::Completed,
+        };
+
+        // Write to an invalid path — should log warning, not panic (BR-3)
+        persist_scan(
+            "/nonexistent/deep/path/that/cannot/be/created\0invalid",
+            "owner/repo",
+            "main",
+            "abc",
+            "scan",
+            None,
+            &review,
+        );
+        // If we get here without panic, BR-3 is satisfied
+    }
+
+    mod regression {
+        use super::*;
+
+        fn make_finding(rule_id: &str, file_path: &str, snippet: &str) -> Finding {
+            Finding {
+                rule_id: rule_id.into(),
+                message: "test".into(),
+                severity: cartomancer_core::severity::Severity::Warning,
+                file_path: file_path.into(),
+                start_line: 1,
+                end_line: 1,
+                snippet: snippet.into(),
+                cwe: None,
+                graph_context: None,
+                llm_analysis: None,
+                escalation_reasons: vec![],
+                is_new: None,
+            }
+        }
+
+        #[test]
+        fn regression_all_new_when_no_baseline() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            let mut findings = vec![make_finding("rule-a", "a.rs", "code")];
+            let (new, existing) = annotate_regression(db_str, "owner/repo", "main", &mut findings);
+
+            assert_eq!(new, 1);
+            assert_eq!(existing, 0);
+            assert_eq!(findings[0].is_new, Some(true));
+        }
+
+        #[test]
+        fn regression_existing_findings_detected() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            // First: persist a scan with a finding on "main"
+            let baseline_finding = make_finding("rule-a", "a.rs", "code");
+            let review = ReviewResult {
+                pr_number: 0,
+                repo_full_name: "owner/repo".into(),
+                head_sha: "base-sha".into(),
+                findings: vec![baseline_finding],
+                summary: "1 finding".into(),
+                status: ReviewStatus::Completed,
+            };
+            persist_scan(
+                db_str,
+                "owner/repo",
+                "main",
+                "base-sha",
+                "scan",
+                None,
+                &review,
+            );
+
+            // Now: annotate the same finding in a PR
+            let mut findings = vec![
+                make_finding("rule-a", "a.rs", "code"),     // same → existing
+                make_finding("rule-b", "b.rs", "new code"), // new
+            ];
+            let (new, existing) = annotate_regression(db_str, "owner/repo", "main", &mut findings);
+
+            assert_eq!(existing, 1);
+            assert_eq!(new, 1);
+            assert_eq!(findings[0].is_new, Some(false));
+            assert_eq!(findings[1].is_new, Some(true));
+        }
+
+        #[test]
+        fn regression_changed_snippet_is_new() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            // Baseline with original snippet
+            let review = ReviewResult {
+                pr_number: 0,
+                repo_full_name: "owner/repo".into(),
+                head_sha: "base-sha".into(),
+                findings: vec![make_finding("rule-a", "a.rs", "old code")],
+                summary: "1 finding".into(),
+                status: ReviewStatus::Completed,
+            };
+            persist_scan(
+                db_str,
+                "owner/repo",
+                "main",
+                "base-sha",
+                "scan",
+                None,
+                &review,
+            );
+
+            // Same rule + file but different snippet → new finding
+            let mut findings = vec![make_finding("rule-a", "a.rs", "modified code")];
+            let (new, existing) = annotate_regression(db_str, "owner/repo", "main", &mut findings);
+
+            assert_eq!(new, 1);
+            assert_eq!(existing, 0);
+            assert_eq!(findings[0].is_new, Some(true));
+        }
+
+        #[test]
+        fn regression_bad_store_treats_all_as_new() {
+            let mut findings = vec![make_finding("rule-a", "a.rs", "code")];
+            let (new, existing) =
+                annotate_regression("/nonexistent\0invalid", "owner/repo", "main", &mut findings);
+
+            assert_eq!(new, 1);
+            assert_eq!(existing, 0);
+            assert_eq!(findings[0].is_new, Some(true));
+        }
+    }
+
+    mod dismiss {
+        use super::*;
+        use cartomancer_store::types::Dismissal;
+
+        fn make_finding(rule_id: &str, file_path: &str, snippet: &str) -> Finding {
+            Finding {
+                rule_id: rule_id.into(),
+                message: "test".into(),
+                severity: cartomancer_core::severity::Severity::Warning,
+                file_path: file_path.into(),
+                start_line: 1,
+                end_line: 1,
+                snippet: snippet.into(),
+                cwe: None,
+                graph_context: None,
+                llm_analysis: None,
+                escalation_reasons: vec![],
+                is_new: None,
+            }
+        }
+
+        #[test]
+        fn dismiss_filters_matching_findings() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            // Create a dismissal
+            let store = Store::open(db_str).unwrap();
+            let fp = cartomancer_store::fingerprint::compute("rule-a", "a.rs", "code");
+            store
+                .dismiss(&Dismissal {
+                    id: None,
+                    fingerprint: fp,
+                    rule_id: "rule-a".into(),
+                    file_path: "a.rs".into(),
+                    start_line: 1,
+                    end_line: 1,
+                    snippet_hash: cartomancer_store::fingerprint::snippet_hash("code"),
+                    reason: Some("false positive".into()),
+                    created_at: None,
+                })
+                .unwrap();
+            drop(store);
+
+            let mut findings = vec![
+                make_finding("rule-a", "a.rs", "code"),  // dismissed
+                make_finding("rule-b", "b.rs", "other"), // not dismissed
+            ];
+
+            let filtered = filter_dismissed(db_str, &mut findings);
+            assert_eq!(filtered, 1);
+            assert_eq!(findings.len(), 1);
+            assert_eq!(findings[0].rule_id, "rule-b");
+        }
+
+        #[test]
+        fn dismiss_no_dismissals_keeps_all() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            let mut findings = vec![make_finding("rule-a", "a.rs", "code")];
+            let filtered = filter_dismissed(db_str, &mut findings);
+            assert_eq!(filtered, 0);
+            assert_eq!(findings.len(), 1);
+        }
+
+        #[test]
+        fn dismiss_changed_snippet_not_filtered() {
+            let dir = tempfile::tempdir().unwrap();
+            let db_path = dir.path().join("test.db");
+            let db_str = db_path.to_str().unwrap();
+
+            // Dismiss with original snippet
+            let store = Store::open(db_str).unwrap();
+            let fp = cartomancer_store::fingerprint::compute("rule-a", "a.rs", "old code");
+            store
+                .dismiss(&Dismissal {
+                    id: None,
+                    fingerprint: fp,
+                    rule_id: "rule-a".into(),
+                    file_path: "a.rs".into(),
+                    start_line: 1,
+                    end_line: 1,
+                    snippet_hash: cartomancer_store::fingerprint::snippet_hash("old code"),
+                    reason: None,
+                    created_at: None,
+                })
+                .unwrap();
+            drop(store);
+
+            // Finding with changed snippet → different fingerprint → not filtered
+            let mut findings = vec![make_finding("rule-a", "a.rs", "new code")];
+            let filtered = filter_dismissed(db_str, &mut findings);
+            assert_eq!(filtered, 0);
+            assert_eq!(findings.len(), 1);
+        }
+
+        #[test]
+        fn dismiss_bad_store_keeps_all() {
+            let mut findings = vec![make_finding("rule-a", "a.rs", "code")];
+            let filtered = filter_dismissed("/nonexistent\0invalid", &mut findings);
+            assert_eq!(filtered, 0);
+            assert_eq!(findings.len(), 1);
+        }
+    }
+
+    #[test]
     fn pipeline_result_has_correct_fields() {
         let review = ReviewResult {
             pr_number: 42,
@@ -451,6 +941,8 @@ mod tests {
                 chunks: vec![],
                 files_changed: vec![],
             },
+            branch: "main".into(),
+            base_branch: "main".into(),
             temp_dir: None,
         };
         assert_eq!(result.review.pr_number, 42);

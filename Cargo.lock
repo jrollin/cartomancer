@@ -380,6 +380,7 @@ dependencies = [
  "cartomancer-core",
  "cartomancer-github",
  "cartomancer-graph",
+ "cartomancer-store",
  "clap",
  "reqwest",
  "serde",
@@ -424,6 +425,18 @@ dependencies = [
  "cartog",
  "cartomancer-core",
  "tracing",
+]
+
+[[package]]
+name = "cartomancer-store"
+version = "0.3.2"
+dependencies = [
+ "cartomancer-core",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

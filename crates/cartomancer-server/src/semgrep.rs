@@ -210,6 +210,7 @@ fn parse_output(output: &[u8], elapsed: Duration) -> Result<Vec<Finding>> {
             graph_context: None,
             llm_analysis: None,
             escalation_reasons: vec![],
+            is_new: None,
         })
         .collect();
 

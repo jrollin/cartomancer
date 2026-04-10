@@ -22,6 +22,10 @@ pub struct Finding {
     pub llm_analysis: Option<String>,
     /// Reasons severity was escalated from original.
     pub escalation_reasons: Vec<String>,
+    /// Regression annotation: `Some(true)` = new finding, `Some(false)` = existing in baseline.
+    /// `None` when regression detection was not performed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_new: Option<bool>,
 }
 
 /// Blast radius and caller context from cartog.
@@ -53,6 +57,7 @@ mod tests {
             graph_context: None,
             llm_analysis: None,
             escalation_reasons: vec![],
+            is_new: None,
         };
         assert!(f.graph_context.is_none());
         assert!(f.llm_analysis.is_none());

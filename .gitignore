@@ -4,6 +4,9 @@
 .cartog.db
 .cartog.db-shm
 .cartog.db-wal
+.cartomancer.db
+.cartomancer.db-shm
+.cartomancer.db-wal
 
 # Embedding cache
 .fastembed_cache/

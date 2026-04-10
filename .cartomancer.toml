@@ -16,6 +16,9 @@ anthropic_model = "claude-sonnet-4-20250514"
 max_tokens = 4096
 # max_concurrent_deepening = 4  # concurrent LLM requests (default: 4)
 
+[storage]
+# db_path = ".cartomancer.db"  # default, relative to working directory
+
 [severity]
 blast_radius_threshold = 5
 llm_deepening_threshold = "error"

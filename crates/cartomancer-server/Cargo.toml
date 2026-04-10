@@ -11,6 +11,7 @@ repository.workspace = true
 cartomancer-core = { workspace = true }
 cartomancer-graph = { workspace = true }
 cartomancer-github = { workspace = true }
+cartomancer-store = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

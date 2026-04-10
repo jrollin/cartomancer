@@ -120,6 +120,7 @@ mod tests {
             }),
             llm_analysis: None,
             escalation_reasons: vec![],
+            is_new: None,
         }
     }
 
@@ -154,6 +155,7 @@ mod tests {
             graph_context: None,
             llm_analysis: None,
             escalation_reasons: vec![],
+            is_new: None,
         };
         escalator.escalate(&mut f);
         assert_eq!(f.severity, Severity::Warning);

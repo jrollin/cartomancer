@@ -35,6 +35,64 @@ pub enum Command {
         #[arg(long, env = "CARTOMANCER_PORT", default_value = "3000")]
         port: u16,
     },
+    /// Browse scan history
+    History {
+        /// Filter by branch name
+        #[arg(long)]
+        branch: Option<String>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Browse findings for a scan or search across scans
+    Findings {
+        /// Scan ID to show findings for (omit to search across scans)
+        scan_id: Option<i64>,
+
+        /// Filter by rule_id (substring match)
+        #[arg(long)]
+        rule: Option<String>,
+
+        /// Filter by minimum severity
+        #[arg(long)]
+        severity: Option<String>,
+
+        /// Filter by file path (substring match)
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Filter by branch name
+        #[arg(long)]
+        branch: Option<String>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Dismiss a finding as false positive
+    Dismiss {
+        /// Scan ID containing the finding
+        scan_id: i64,
+
+        /// Finding index (1-based, from findings output)
+        finding_index: usize,
+
+        /// Reason for dismissal
+        #[arg(long)]
+        reason: Option<String>,
+    },
+    /// List all dismissed findings
+    Dismissed {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
+    /// Remove a dismissal
+    Undismiss {
+        /// Dismissal ID (from dismissed output)
+        dismissal_id: i64,
+    },
     /// Review a GitHub PR (one-shot mode)
     Review {
         /// Repository (owner/repo)
@@ -125,6 +183,130 @@ mod tests {
     fn cli_parse_scan_still_works() {
         let cli = Cli::try_parse_from(["cartomancer", "scan", ".", "--format", "json"]).unwrap();
         assert!(matches!(cli.command, Command::Scan { .. }));
+    }
+
+    #[test]
+    fn cli_parse_history_defaults() {
+        let cli = Cli::try_parse_from(["cartomancer", "history"]).unwrap();
+        match cli.command {
+            Command::History { branch, format } => {
+                assert!(branch.is_none());
+                assert!(matches!(format, OutputFormat::Text));
+            }
+            _ => panic!("expected History command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_history_with_branch() {
+        let cli = Cli::try_parse_from([
+            "cartomancer",
+            "history",
+            "--branch",
+            "main",
+            "--format",
+            "json",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::History { branch, format } => {
+                assert_eq!(branch.as_deref(), Some("main"));
+                assert!(matches!(format, OutputFormat::Json));
+            }
+            _ => panic!("expected History command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_findings_by_scan_id() {
+        let cli = Cli::try_parse_from(["cartomancer", "findings", "42"]).unwrap();
+        match cli.command {
+            Command::Findings { scan_id, .. } => {
+                assert_eq!(scan_id, Some(42));
+            }
+            _ => panic!("expected Findings command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_findings_with_filters() {
+        let cli = Cli::try_parse_from([
+            "cartomancer",
+            "findings",
+            "--rule",
+            "sql",
+            "--severity",
+            "error",
+            "--file",
+            "auth",
+            "--branch",
+            "main",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Findings {
+                scan_id,
+                rule,
+                severity,
+                file,
+                branch,
+                ..
+            } => {
+                assert!(scan_id.is_none());
+                assert_eq!(rule.as_deref(), Some("sql"));
+                assert_eq!(severity.as_deref(), Some("error"));
+                assert_eq!(file.as_deref(), Some("auth"));
+                assert_eq!(branch.as_deref(), Some("main"));
+            }
+            _ => panic!("expected Findings command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_dismiss() {
+        let cli = Cli::try_parse_from([
+            "cartomancer",
+            "dismiss",
+            "1",
+            "3",
+            "--reason",
+            "false positive",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Dismiss {
+                scan_id,
+                finding_index,
+                reason,
+            } => {
+                assert_eq!(scan_id, 1);
+                assert_eq!(finding_index, 3);
+                assert_eq!(reason.as_deref(), Some("false positive"));
+            }
+            _ => panic!("expected Dismiss command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_dismissed() {
+        let cli = Cli::try_parse_from(["cartomancer", "dismissed", "--format", "json"]).unwrap();
+        match cli.command {
+            Command::Dismissed { format } => {
+                assert!(matches!(format, OutputFormat::Json));
+            }
+            _ => panic!("expected Dismissed command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_undismiss() {
+        let cli = Cli::try_parse_from(["cartomancer", "undismiss", "5"]).unwrap();
+        match cli.command {
+            Command::Undismiss { dismissal_id } => {
+                assert_eq!(dismissal_id, 5);
+            }
+            _ => panic!("expected Undismiss command"),
+        }
     }
 
     #[test]
