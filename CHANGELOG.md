@@ -1,3 +1,14 @@
+## [0.3.1] - 2026-04-10
+
+### 🚀 Features
+
+- *(semgrep)* Add exclude patterns config option
+- *(cli)* Add --version flag
+- *(semgrep)* Add jobs config option, refactor run_semgrep signature
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.3.1
 ## [0.3.0] - 2026-04-10
 
 ### 🚀 Features
