@@ -19,7 +19,7 @@ cartomancer serve                              Webhook server (not yet implement
  1. Prepare       Clone repo or reuse --work-dir
  2. Fetch Meta    GitHub API → PrMetadata (head SHA, base SHA)
  3. Fetch Diff    GitHub API → raw unified diff → PullRequestDiff
- 4. Semgrep Scan  subprocess --baseline-commit → Vec<Finding>
+ 4. Opengrep Scan  subprocess --baseline-commit → Vec<Finding>
  5. Graph Enrich  cartog impact/refs → GraphContext per finding
  6. Escalate      blast radius + domain → adjusted Severity
  7. LLM Deepen    Ollama or Anthropic → analysis text (conditional)
@@ -47,7 +47,7 @@ PrMetadata { head_sha, base_sha, head_ref, base_ref }
   ▼ GitHubClient.fetch_diff() + parse_diff()
 PullRequestDiff { chunks: Vec<DiffChunk>, files_changed }
   │
-  ▼ semgrep::run_semgrep(--baseline-commit base_sha, --exclude patterns)
+  ▼ opengrep::run_opengrep(--baseline-commit base_sha, --exclude patterns)
 Vec<Finding> (new findings only, from diff)
   │
   ▼ CartogEnricher.enrich() per finding
@@ -150,8 +150,8 @@ CLI ──parse args──▶ cmd_review()
                       │
                       ├─▶ parse_diff() → PullRequestDiff
                       │
-                      ├─▶ semgrep::run_semgrep(--baseline-commit, --exclude)
-                      │       └── subprocess: semgrep scan --json
+                      ├─▶ opengrep::run_opengrep(--baseline-commit, --exclude)
+                      │       └── subprocess: opengrep scan --json
                       │
                       ├─▶ CartogEnricher.enrich() per finding
                       │       ├── db.outline()   → resolve symbol at line
@@ -219,7 +219,7 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 ## Concurrency Model
 
 - **tokio** async runtime for GitHub API calls and LLM calls
-- **Subprocess** for Semgrep (tokio::process::Command)
+- **Subprocess** for opengrep (tokio::process::Command)
 - **Sync** git clone/checkout (std::process::Command, blocking)
 - **Sync** cartog Database access (rusqlite is not Send; access from a single task)
 - **Sync** Store access (rusqlite, runs once after pipeline completes)
@@ -228,7 +228,7 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 ## Error Handling Strategy
 
 - **Per-finding errors**: logged and skipped (partial results are better than no results)
-- **Pipeline-level errors**: fail before posting (clone, semgrep, GitHub API)
+- **Pipeline-level errors**: fail before posting (clone, opengrep, GitHub API)
 - **LLM errors**: logged and skipped (review still posts without LLM analysis)
 - **Temp dir cleanup**: always cleaned up, even on failure (via TempDir Drop)
 - **Store errors**: logged and skipped — persistence never blocks the pipeline (BR-3)
@@ -237,7 +237,7 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 
 - Webhook server (`Command::Serve`) reusing `run_pipeline`
 - Multiple LLM providers (OpenAI, local models via LM Studio)
-- Custom rule YAML alongside Semgrep
+- Custom rule YAML alongside opengrep
 - GitLab / Bitbucket support
 - Slack/Teams notifications for Critical findings
 - Dashboard / web UI for trend visualization over stored scan history

@@ -1,10 +1,10 @@
-//! Semgrep finding representation and enrichment data.
+//! Opengrep finding representation and enrichment data.
 
 use serde::{Deserialize, Serialize};
 
 use crate::severity::Severity;
 
-/// A finding from Semgrep, potentially enriched with graph context.
+/// A finding from opengrep, potentially enriched with graph context.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Finding {
     pub rule_id: String,

@@ -13,7 +13,7 @@ Rust (single binary, performance, native cartog integration).
 | axum | 0.8 | Webhook HTTP server |
 | reqwest | 0.12 | HTTP client (GitHub API, Ollama, Anthropic) |
 | clap | 4 | CLI argument parsing |
-| serde / serde_json / toml | 1 / 1 / 0.8 | Serialization (config TOML, API payloads, semgrep JSON) |
+| serde / serde_json / toml | 1 / 1 / 0.8 | Serialization (config TOML, API payloads, opengrep JSON) |
 | tracing / tracing-subscriber | 0.1 / 0.3 | Structured logging |
 | thiserror | 2 | Domain error types |
 | anyhow | 1 | Application error propagation |
@@ -25,7 +25,7 @@ Rust (single binary, performance, native cartog integration).
 
 | Tool | Integration | Required |
 |------|------------|----------|
-| Semgrep | Subprocess (`semgrep scan --json`) | Yes (must be in PATH) |
+| Opengrep | Subprocess (`opengrep scan --json`) | Yes (must be in PATH) |
 | Ollama | HTTP API (`/api/chat`) | Optional (default LLM for local dev) |
 | Anthropic API | HTTP API (`/v1/messages`) | Optional (production LLM) |
 | cartog | Rust crate (compiled in) | Built-in |
@@ -34,7 +34,7 @@ Rust (single binary, performance, native cartog integration).
 
 | Decision | Rationale |
 |----------|-----------|
-| Subprocess for Semgrep | Semgrep is a mature binary; FFI would be fragile and unnecessary |
+| Subprocess for opengrep | Opengrep is a mature binary; FFI would be fragile and unnecessary |
 | Raw reqwest for GitHub API | Avoids octocrab dependency; GitHub REST API is simple enough |
 | cartog from crates.io | Native Rust integration, no subprocess overhead for graph queries |
 | LLM provider trait | Supports local Ollama for testing, Anthropic for production |
@@ -59,7 +59,7 @@ opt-level = 1  # tree-sitter C grammars via cartog compile slowly at level 0
 - MSRV: 1.77
 - No Python/Node runtime dependency
 - Single binary deployment
-- Semgrep must be installed separately (not bundled)
+- Opengrep must be installed separately (not bundled)
 - Air-gap capable: cartog runs fully offline, only LLM calls require network
 
 ## Security Considerations

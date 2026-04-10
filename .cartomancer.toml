@@ -1,11 +1,11 @@
 # Cartomancer configuration
 # Copy to .cartomancer.local.toml for secrets (gitignored).
 
-[semgrep]
+[opengrep]
 rules = ["auto"]
 timeout_seconds = 120
 # exclude = [".github/", "config/database.yml", "etc/absences/"]
-# jobs = 4  # optional, defaults to semgrep auto-detection (~num CPUs)
+# jobs = 4  # optional, defaults to opengrep auto-detection (~num CPUs)
 
 [llm]
 provider = "ollama"

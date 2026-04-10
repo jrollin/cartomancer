@@ -1,14 +1,14 @@
 //! Cartomancer — PR review tool with blast radius awareness.
 //!
 //! Single binary: serves webhooks, runs CLI commands, orchestrates the
-//! Semgrep -> cartog -> escalation -> LLM pipeline.
+//! opengrep -> cartog -> escalation -> LLM pipeline.
 
 mod cli;
 mod comment;
 mod config;
 mod llm;
+mod opengrep;
 mod pipeline;
-mod semgrep;
 mod webhook;
 
 use std::path::Path;
@@ -196,14 +196,14 @@ async fn cmd_scan(
 
     info!(path = %target_str, "starting scan");
 
-    // 1. Run semgrep
-    let semgrep_start = Instant::now();
-    let mut findings = semgrep::run_semgrep(&target_str, &config.semgrep, None).await?;
-    let semgrep_elapsed = semgrep_start.elapsed();
+    // 1. Run opengrep
+    let opengrep_start = Instant::now();
+    let mut findings = opengrep::run_opengrep(&target_str, &config.opengrep, None).await?;
+    let opengrep_elapsed = opengrep_start.elapsed();
 
     if findings.is_empty() {
         info!(
-            elapsed_ms = semgrep_elapsed.as_millis() as u64,
+            elapsed_ms = opengrep_elapsed.as_millis() as u64,
             "scan complete, no findings"
         );
 
@@ -226,11 +226,11 @@ async fn cmd_scan(
             &review_for_persist,
         );
 
-        println!("No findings from semgrep.");
+        println!("No findings from opengrep.");
         return Ok(());
     }
 
-    log_severity_summary("after semgrep", &findings);
+    log_severity_summary("after opengrep", &findings);
 
     // 2. Enrich with cartog (if indexed)
     let enrich_start = Instant::now();

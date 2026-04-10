@@ -7,8 +7,8 @@ pub enum CartomancerError {
     #[error("GitHub API error: {0}")]
     GitHub(String),
 
-    #[error("Semgrep execution failed: {0}")]
-    Semgrep(String),
+    #[error("Opengrep execution failed: {0}")]
+    Opengrep(String),
 
     #[error("Cartog graph error: {0}")]
     Graph(String),

@@ -20,7 +20,7 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 
 ## Key Features
 
-- **Semgrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`
+- **Opengrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`
 - **Blast radius via cartog**: transitive impact analysis, caller graphs, domain detection
 - **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius
 - **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production)
@@ -30,7 +30,7 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 ## Pipeline
 
 ```
-GitHub webhook → fetch diff → semgrep scan → cartog enrich
+GitHub webhook → fetch diff → opengrep scan → cartog enrich
   → escalate severity → LLM deepen (conditional)
   → regression check → dismiss filter → post comments + persist
 ```
@@ -41,10 +41,10 @@ GitHub webhook → fetch diff → semgrep scan → cartog enrich
 |------|----------|----------------------|
 | CodeRabbit | LLM reviews + learning | No structural graph, no blast radius |
 | SonarQube | Taint analysis + rules | No LLM, no graph awareness, no PR-native |
-| Semgrep | Best open rule ecosystem | No blast radius, no severity escalation |
+| Opengrep | Best open rule ecosystem | No blast radius, no severity escalation |
 | Claude Code review | Zero-setup LLM review | No persistent graph, no rule backbone |
 
-Cartomancer is not a replacement for any of these. It adds blast-radius-aware severity escalation on top of Semgrep findings, powered by cartog.
+Cartomancer is not a replacement for any of these. It adds blast-radius-aware severity escalation on top of opengrep findings, powered by cartog.
 
 ## Non-Goals
 

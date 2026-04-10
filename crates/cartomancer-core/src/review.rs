@@ -9,7 +9,7 @@ use crate::finding::Finding;
 pub enum ReviewStatus {
     Pending,
     DiffFetched,
-    SemgrepScanned,
+    OpengrepScanned,
     GraphEnriched,
     SeverityEscalated,
     LlmDeepened,
@@ -38,7 +38,7 @@ mod tests {
         let statuses = vec![
             ReviewStatus::Pending,
             ReviewStatus::DiffFetched,
-            ReviewStatus::SemgrepScanned,
+            ReviewStatus::OpengrepScanned,
             ReviewStatus::GraphEnriched,
             ReviewStatus::SeverityEscalated,
             ReviewStatus::LlmDeepened,
