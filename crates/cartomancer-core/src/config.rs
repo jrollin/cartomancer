@@ -43,6 +43,9 @@ pub struct SemgrepConfig {
     pub rules: Vec<String>,
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
+    /// Glob patterns passed as `--exclude` to semgrep (e.g. `.github/`, `config/database.yml`).
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 impl Default for SemgrepConfig {
@@ -50,6 +53,7 @@ impl Default for SemgrepConfig {
         Self {
             rules: default_semgrep_rules(),
             timeout_seconds: default_timeout(),
+            exclude: Vec::new(),
         }
     }
 }
@@ -170,6 +174,7 @@ mod tests {
         let config = AppConfig::default();
         assert_eq!(config.semgrep.rules, vec!["auto"]);
         assert_eq!(config.semgrep.timeout_seconds, 120);
+        assert!(config.semgrep.exclude.is_empty());
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
@@ -181,5 +186,19 @@ mod tests {
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
+    }
+
+    #[test]
+    fn deserialize_semgrep_exclude() {
+        let toml_str = r#"
+[semgrep]
+rules = ["auto"]
+exclude = [".github/", "config/database.yml", "etc/absences/"]
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.semgrep.exclude,
+            vec![".github/", "config/database.yml", "etc/absences/"]
+        );
     }
 }

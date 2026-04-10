@@ -79,6 +79,7 @@ pub async fn run_pipeline(
         &config.semgrep.rules,
         Some(&pr_meta.base_sha),
         config.semgrep.timeout_seconds,
+        &config.semgrep.exclude,
     )
     .await?;
     let semgrep_elapsed = semgrep_start.elapsed();

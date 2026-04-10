@@ -56,7 +56,7 @@ cartomancer serve [--port <n>]                    # not yet implemented
 2. Fetch PR metadata (GitHub API → head SHA, base SHA)
 3. Prepare work dir (clone to temp dir, or reuse `--work-dir`)
 4. Fetch + parse unified diff (GitHub API → `PullRequestDiff`)
-5. Semgrep scan (subprocess with `--baseline-commit base_sha`)
+5. Semgrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns from config)
 6. Enrich with cartog (impact, refs, callers, domain detection)
 7. Escalate severity (blast radius thresholds + domain tags)
 8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3)

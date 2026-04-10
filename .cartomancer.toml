@@ -4,6 +4,7 @@
 [semgrep]
 rules = ["auto"]
 timeout_seconds = 120
+# exclude = [".github/", "config/database.yml", "etc/absences/"]
 
 [llm]
 provider = "ollama"

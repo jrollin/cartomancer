@@ -166,6 +166,7 @@ async fn cmd_scan(
         &config.semgrep.rules,
         None,
         config.semgrep.timeout_seconds,
+        &config.semgrep.exclude,
     )
     .await?;
     let semgrep_elapsed = semgrep_start.elapsed();

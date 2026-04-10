@@ -55,16 +55,16 @@ struct SemgrepError {
     message: String,
 }
 
-/// Run semgrep against the given directory and return parsed findings.
+/// Build the semgrep `Command` with all flags.
 ///
-/// Uses `--baseline-commit` when provided to only report new findings.
-/// Enforces a timeout on our side (kills the process if exceeded).
-pub async fn run_semgrep(
+/// Extracted for testability — the returned command is ready to spawn.
+fn build_command(
     target_dir: &str,
     rules: &[String],
     baseline_commit: Option<&str>,
     timeout_seconds: u64,
-) -> Result<Vec<Finding>> {
+    exclude: &[String],
+) -> Command {
     let mut cmd = Command::new("semgrep");
     cmd.arg("scan")
         .arg("--json")
@@ -77,23 +77,54 @@ pub async fn run_semgrep(
         cmd.arg("--config").arg(rule);
     }
 
+    for pattern in exclude {
+        cmd.arg("--exclude").arg(pattern);
+    }
+
     if let Some(sha) = baseline_commit {
         cmd.arg("--baseline-commit").arg(sha);
     }
 
-    // Log the full command for debugging
-    let cmd_display = format!(
-        "semgrep scan --json --quiet --timeout {} {}{}",
-        timeout_seconds,
-        rules
-            .iter()
-            .map(|r| format!("--config {r}"))
-            .collect::<Vec<_>>()
-            .join(" "),
-        baseline_commit
-            .map(|s| format!(" --baseline-commit {s}"))
-            .unwrap_or_default(),
-    );
+    cmd
+}
+
+/// Format the command for debug logging.
+fn format_command_display(
+    rules: &[String],
+    baseline_commit: Option<&str>,
+    timeout_seconds: u64,
+    exclude: &[String],
+) -> String {
+    let mut parts = vec![format!(
+        "semgrep scan --json --quiet --timeout {}",
+        timeout_seconds
+    )];
+    for r in rules {
+        parts.push(format!("--config {r}"));
+    }
+    for e in exclude {
+        parts.push(format!("--exclude {e}"));
+    }
+    if let Some(sha) = baseline_commit {
+        parts.push(format!("--baseline-commit {sha}"));
+    }
+    parts.join(" ")
+}
+
+/// Run semgrep against the given directory and return parsed findings.
+///
+/// Uses `--baseline-commit` when provided to only report new findings.
+/// Enforces a timeout on our side (kills the process if exceeded).
+pub async fn run_semgrep(
+    target_dir: &str,
+    rules: &[String],
+    baseline_commit: Option<&str>,
+    timeout_seconds: u64,
+    exclude: &[String],
+) -> Result<Vec<Finding>> {
+    let mut cmd = build_command(target_dir, rules, baseline_commit, timeout_seconds, exclude);
+
+    let cmd_display = format_command_display(rules, baseline_commit, timeout_seconds, exclude);
     info!(cmd = %cmd_display, target_dir, "executing semgrep");
 
     let start = std::time::Instant::now();
@@ -244,5 +275,53 @@ mod tests {
         let bad = b"this is not json at all {{{";
         let findings = parse_output(bad, Duration::from_secs(1)).unwrap();
         assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn build_command_includes_exclude_flags() {
+        let rules = vec!["auto".into()];
+        let exclude = vec![".github/".into(), "config/database.yml".into()];
+        let cmd = build_command("/tmp", &rules, Some("abc123"), 60, &exclude);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(args.contains(&std::ffi::OsStr::new("--exclude")));
+        // Verify both patterns appear right after their --exclude flag
+        let positions: Vec<_> = args
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| **a == std::ffi::OsStr::new("--exclude"))
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(positions.len(), 2);
+        assert_eq!(args[positions[0] + 1], ".github/");
+        assert_eq!(args[positions[1] + 1], "config/database.yml");
+    }
+
+    #[test]
+    fn build_command_without_exclude() {
+        let rules = vec!["auto".into()];
+        let cmd = build_command("/tmp", &rules, None, 120, &[]);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        assert!(!args.contains(&std::ffi::OsStr::new("--exclude")));
+    }
+
+    #[test]
+    fn format_command_display_with_exclude() {
+        let rules = vec!["auto".into()];
+        let exclude = vec![".github/".into()];
+        let display = format_command_display(&rules, Some("abc"), 60, &exclude);
+        assert_eq!(
+            display,
+            "semgrep scan --json --quiet --timeout 60 --config auto --exclude .github/ --baseline-commit abc"
+        );
+    }
+
+    #[test]
+    fn format_command_display_without_exclude() {
+        let rules = vec!["auto".into()];
+        let display = format_command_display(&rules, None, 120, &[]);
+        assert_eq!(
+            display,
+            "semgrep scan --json --quiet --timeout 120 --config auto"
+        );
     }
 }

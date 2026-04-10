@@ -38,7 +38,7 @@ PrMetadata { head_sha, base_sha, head_ref, base_ref }
   ▼ GitHubClient.fetch_diff() + parse_diff()
 PullRequestDiff { chunks: Vec<DiffChunk>, files_changed }
   │
-  ▼ semgrep::run_semgrep(--baseline-commit base_sha)
+  ▼ semgrep::run_semgrep(--baseline-commit base_sha, --exclude patterns)
 Vec<Finding> (new findings only, from diff)
   │
   ▼ CartogEnricher.enrich() per finding
@@ -133,7 +133,7 @@ CLI ──parse args──▶ cmd_review()
                       │
                       ├─▶ parse_diff() → PullRequestDiff
                       │
-                      ├─▶ semgrep::run_semgrep(--baseline-commit base_sha)
+                      ├─▶ semgrep::run_semgrep(--baseline-commit, --exclude)
                       │       └── subprocess: semgrep scan --json
                       │
                       ├─▶ CartogEnricher.enrich() per finding
