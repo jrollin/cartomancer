@@ -34,6 +34,7 @@ cartomancer-server (binary)
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
 - `AppConfig` (core::config) — deserialized from `.cartomancer.toml`
+- `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
 - `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations
 - `CartogEnricher` (graph::enricher) — wraps cartog::db::Database
 - `SeverityEscalator` (graph::escalator) — blast radius + domain → severity upgrade

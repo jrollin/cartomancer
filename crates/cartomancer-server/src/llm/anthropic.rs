@@ -66,7 +66,7 @@ impl LlmProvider for AnthropicProvider {
             }],
         };
 
-        let resp = self
+        let response = self
             .http
             .post("https://api.anthropic.com/v1/messages")
             .header("x-api-key", &self.api_key)
@@ -75,12 +75,24 @@ impl LlmProvider for AnthropicProvider {
             .json(&body)
             .send()
             .await
-            .context("Failed to connect to Anthropic API")?
-            .error_for_status()
-            .context("Anthropic API returned an error")?
-            .json::<MessagesResponse>()
+            .context("Failed to connect to Anthropic API")?;
+
+        let status = response.status();
+        let body_text = response
+            .text()
             .await
-            .context("Failed to parse Anthropic response")?;
+            .context("Failed to read Anthropic response body")?;
+
+        if !status.is_success() {
+            anyhow::bail!(
+                "Anthropic API error (HTTP {}): {}",
+                status.as_u16(),
+                body_text
+            );
+        }
+
+        let resp: MessagesResponse =
+            serde_json::from_str(&body_text).context("Failed to parse Anthropic response")?;
 
         let text = resp
             .content

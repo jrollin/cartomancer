@@ -191,11 +191,7 @@ fn parse_output(output: &[u8], elapsed: Duration) -> Result<Vec<Finding>> {
 }
 
 fn map_severity(s: &str) -> Severity {
-    match s {
-        "ERROR" => Severity::Error,
-        "WARNING" => Severity::Warning,
-        _ => Severity::Info,
-    }
+    s.parse().unwrap_or(Severity::Info)
 }
 
 #[cfg(test)]

@@ -66,7 +66,7 @@ fn default_timeout() -> u64 {
 #[derive(Clone, Serialize, Deserialize)]
 pub struct LlmConfig {
     #[serde(default)]
-    pub provider: LlmProvider,
+    pub provider: LlmBackend,
     pub ollama_base_url: Option<String>,
     pub ollama_model: Option<String>,
     #[serde(skip_serializing)]
@@ -95,7 +95,7 @@ impl std::fmt::Debug for LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
-            provider: LlmProvider::default(),
+            provider: LlmBackend::default(),
             ollama_base_url: None,
             ollama_model: None,
             anthropic_api_key: None,
@@ -109,10 +109,10 @@ fn default_max_tokens() -> u32 {
     4096
 }
 
-/// Supported LLM providers.
+/// Supported LLM backends.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum LlmProvider {
+pub enum LlmBackend {
     #[default]
     Ollama,
     Anthropic,
@@ -124,6 +124,8 @@ pub struct SeverityConfig {
     pub blast_radius_threshold: u32,
     #[serde(default = "default_llm_threshold")]
     pub llm_deepening_threshold: Severity,
+    #[serde(default = "default_impact_depth")]
+    pub impact_depth: u32,
 }
 
 impl Default for SeverityConfig {
@@ -131,6 +133,7 @@ impl Default for SeverityConfig {
         Self {
             blast_radius_threshold: default_blast_threshold(),
             llm_deepening_threshold: default_llm_threshold(),
+            impact_depth: default_impact_depth(),
         }
     }
 }
@@ -143,6 +146,10 @@ fn default_llm_threshold() -> Severity {
     Severity::Error
 }
 
+fn default_impact_depth() -> u32 {
+    3
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -150,12 +157,12 @@ mod tests {
     #[test]
     fn llm_provider_deserializes_from_string() {
         let json = r#""ollama""#;
-        let provider: LlmProvider = serde_json::from_str(json).unwrap();
-        assert!(matches!(provider, LlmProvider::Ollama));
+        let provider: LlmBackend = serde_json::from_str(json).unwrap();
+        assert!(matches!(provider, LlmBackend::Ollama));
 
         let json = r#""anthropic""#;
-        let provider: LlmProvider = serde_json::from_str(json).unwrap();
-        assert!(matches!(provider, LlmProvider::Anthropic));
+        let provider: LlmBackend = serde_json::from_str(json).unwrap();
+        assert!(matches!(provider, LlmBackend::Anthropic));
     }
 
     #[test]
@@ -164,7 +171,8 @@ mod tests {
         assert_eq!(config.semgrep.rules, vec!["auto"]);
         assert_eq!(config.semgrep.timeout_seconds, 120);
         assert_eq!(config.severity.blast_radius_threshold, 5);
-        assert!(matches!(config.llm.provider, LlmProvider::Ollama));
+        assert_eq!(config.severity.impact_depth, 3);
+        assert!(matches!(config.llm.provider, LlmBackend::Ollama));
     }
 
     #[test]
@@ -172,6 +180,6 @@ mod tests {
         let toml_str = "[semgrep]\nrules = [\"auto\"]\n";
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.severity.blast_radius_threshold, 5);
-        assert!(matches!(config.llm.provider, LlmProvider::Ollama));
+        assert!(matches!(config.llm.provider, LlmBackend::Ollama));
     }
 }

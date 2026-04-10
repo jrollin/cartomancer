@@ -158,4 +158,90 @@ mod tests {
         escalator.escalate(&mut f);
         assert_eq!(f.severity, Severity::Warning);
     }
+
+    #[test]
+    fn threshold_exact_match_escalates_to_error() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Warning, 5, vec![]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Error);
+    }
+
+    #[test]
+    fn just_below_threshold_no_escalation() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Warning, 4, vec![]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Warning);
+    }
+
+    #[test]
+    fn blast_radius_between_threshold_and_4x_escalates_to_error() {
+        let escalator = SeverityEscalator::new(5);
+        // 15 is >= 5 but < 20, so Error not Critical
+        let mut f = make_finding(Severity::Info, 15, vec![]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Error);
+    }
+
+    #[test]
+    fn escalate_payment_domain() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Warning, 1, vec!["payment".into()]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Critical);
+    }
+
+    #[test]
+    fn escalate_many_callers() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Info, 1, vec![]);
+        f.graph_context.as_mut().unwrap().callers =
+            (0..10).map(|i| format!("caller_{i}")).collect();
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Error);
+    }
+
+    #[test]
+    fn nine_callers_no_escalation_from_caller_rule() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Info, 1, vec![]);
+        f.graph_context.as_mut().unwrap().callers = (0..9).map(|i| format!("caller_{i}")).collect();
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Info);
+    }
+
+    #[test]
+    fn auth_overrides_blast_radius_error() {
+        let escalator = SeverityEscalator::new(5);
+        // blast_radius=6 → Error, then auth → Critical
+        let mut f = make_finding(Severity::Warning, 6, vec!["auth".into()]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Critical);
+        assert!(f.escalation_reasons.len() >= 2);
+    }
+
+    #[test]
+    fn escalate_batch_counts_correctly() {
+        let escalator = SeverityEscalator::new(5);
+        let mut findings = vec![
+            make_finding(Severity::Warning, 20, vec![]), // → Critical
+            make_finding(Severity::Warning, 1, vec![]),  // no escalation
+            make_finding(Severity::Critical, 20, vec![]), // already Critical
+        ];
+        escalator.escalate_batch(&mut findings);
+        assert_eq!(findings[0].severity, Severity::Critical);
+        assert_eq!(findings[1].severity, Severity::Warning);
+        assert_eq!(findings[2].severity, Severity::Critical);
+    }
+
+    #[test]
+    fn escalation_reasons_accumulated() {
+        let escalator = SeverityEscalator::new(5);
+        let mut f = make_finding(Severity::Info, 6, vec!["auth".into(), "payment".into()]);
+        escalator.escalate(&mut f);
+        assert_eq!(f.severity, Severity::Critical);
+        // blast_radius >= threshold → Error, auth → Critical, payment → already Critical (no new reason)
+        assert!(f.escalation_reasons.len() >= 2);
+    }
 }

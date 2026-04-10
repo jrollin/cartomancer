@@ -87,7 +87,7 @@ async fn cmd_scan(
     let enrich_start = Instant::now();
     let db_path = target.join(".cartog.db");
     if db_path.exists() {
-        match CartogEnricher::open(&db_path.to_string_lossy()) {
+        match CartogEnricher::open(&db_path.to_string_lossy(), config.severity.impact_depth) {
             Ok(enricher) => {
                 let mut enriched = 0u32;
                 let mut failed = 0u32;

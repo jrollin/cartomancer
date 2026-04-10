@@ -34,7 +34,7 @@ pub trait LlmProvider: Send + Sync {
 /// Create a provider from configuration.
 pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
     match config.provider {
-        cartomancer_core::config::LlmProvider::Ollama => {
+        cartomancer_core::config::LlmBackend::Ollama => {
             let base_url = config
                 .ollama_base_url
                 .as_deref()
@@ -42,7 +42,7 @@ pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
             let model = config.ollama_model.as_deref().unwrap_or("gemma4");
             Ok(Box::new(ollama::OllamaProvider::new(base_url, model)))
         }
-        cartomancer_core::config::LlmProvider::Anthropic => {
+        cartomancer_core::config::LlmBackend::Anthropic => {
             let api_key = config
                 .anthropic_api_key
                 .clone()

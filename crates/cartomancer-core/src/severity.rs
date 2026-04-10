@@ -25,6 +25,20 @@ impl fmt::Display for Severity {
     }
 }
 
+impl std::str::FromStr for Severity {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "info" => Ok(Self::Info),
+            "warning" => Ok(Self::Warning),
+            "error" => Ok(Self::Error),
+            "critical" => Ok(Self::Critical),
+            other => Err(format!("unknown severity: '{other}'")),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -40,5 +54,14 @@ mod tests {
     fn severity_display() {
         assert_eq!(Severity::Critical.to_string(), "critical");
         assert_eq!(Severity::Info.to_string(), "info");
+    }
+
+    #[test]
+    fn severity_from_str() {
+        assert_eq!("info".parse::<Severity>(), Ok(Severity::Info));
+        assert_eq!("WARNING".parse::<Severity>(), Ok(Severity::Warning));
+        assert_eq!("Error".parse::<Severity>(), Ok(Severity::Error));
+        assert_eq!("CRITICAL".parse::<Severity>(), Ok(Severity::Critical));
+        assert!("unknown".parse::<Severity>().is_err());
     }
 }

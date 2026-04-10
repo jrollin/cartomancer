@@ -16,3 +16,4 @@ max_tokens = 4096
 [severity]
 blast_radius_threshold = 5
 llm_deepening_threshold = "error"
+# impact_depth = 3
