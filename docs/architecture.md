@@ -251,7 +251,7 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 
 The `serve` command runs an axum HTTP server that receives GitHub `pull_request` webhook events.
 
-```
+```text
 POST /webhook → HMAC-SHA256 validation → parse PullRequestEvent → should_review() filter
   → acquire semaphore permit → spawn background: run_pipeline + finalize_and_post
   → return 202 Accepted
@@ -268,7 +268,7 @@ GET /health → 200 OK
 
 The pipeline persists progress to the `scans` table after each stage:
 
-```
+```text
 pending → scanned → enriched → escalated → deepened → completed
                                                     ↘ failed
 ```

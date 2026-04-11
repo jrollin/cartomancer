@@ -42,10 +42,22 @@ pub fn load_config(path: &str) -> Result<AppConfig> {
     Ok(config)
 }
 
+/// Returns true if the value is a non-empty, non-whitespace string.
+fn is_non_empty(s: &str) -> bool {
+    !s.trim().is_empty()
+}
+
 /// Validate serve-specific requirements (webhook secret and GitHub token).
 pub fn validate_for_serve(config: &AppConfig) -> Result<()> {
-    let has_secret = config.github.webhook_secret.is_some()
-        || std::env::var("CARTOMANCER_WEBHOOK_SECRET").is_ok();
+    let has_secret = config
+        .github
+        .webhook_secret
+        .as_deref()
+        .map(is_non_empty)
+        .unwrap_or(false)
+        || std::env::var("CARTOMANCER_WEBHOOK_SECRET")
+            .map(|v| is_non_empty(&v))
+            .unwrap_or(false);
     if !has_secret {
         anyhow::bail!(
             "serve requires a webhook secret: set github.webhook_secret in config \
@@ -53,7 +65,15 @@ pub fn validate_for_serve(config: &AppConfig) -> Result<()> {
         );
     }
 
-    let has_token = config.github.token.is_some() || std::env::var("GITHUB_TOKEN").is_ok();
+    let has_token = config
+        .github
+        .token
+        .as_deref()
+        .map(is_non_empty)
+        .unwrap_or(false)
+        || std::env::var("GITHUB_TOKEN")
+            .map(|v| is_non_empty(&v))
+            .unwrap_or(false);
     if !has_token {
         anyhow::bail!(
             "serve requires a GitHub token: set github.token in config \
@@ -147,5 +167,25 @@ mod tests {
         config.github.token = Some("ghp_test".into());
         let result = validate_for_serve(&config);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_for_serve_empty_secret_rejected() {
+        std::env::remove_var("CARTOMANCER_WEBHOOK_SECRET");
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("".into());
+        config.github.token = Some("ghp_test".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_for_serve_whitespace_token_rejected() {
+        std::env::remove_var("GITHUB_TOKEN");
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("secret".into());
+        config.github.token = Some("   ".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
     }
 }

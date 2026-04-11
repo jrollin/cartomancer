@@ -47,6 +47,9 @@ pub struct PipelineResult {
     pub scan_duration: std::time::Duration,
     /// Number of opengrep rules used — used for summary regeneration after off-diff splitting.
     pub rule_count: usize,
+    /// Scan ID from the store (if stage tracking is active). Used by `finalize_and_post`
+    /// to update the existing scan record instead of inserting a duplicate.
+    pub scan_id: Option<i64>,
     /// Temp dir handle — kept alive until review is posted, then dropped for cleanup.
     /// None if --work-dir was used.
     #[allow(dead_code)]
@@ -133,8 +136,8 @@ pub async fn run_pipeline(
     let rule_count = config.opengrep.rules.len();
 
     // Create or reuse scan record
-    let scan_id = match scan_id {
-        Some(id) => id,
+    let scan_id: Option<i64> = match scan_id {
+        Some(id) => Some(id),
         None => {
             if let Some(ref s) = store {
                 let record = ScanRecord {
@@ -149,34 +152,37 @@ pub async fn run_pipeline(
                     created_at: None,
                     stage: "pending".into(),
                     error_message: None,
+                    failed_at_stage: None,
                 };
                 match s.insert_scan(&record) {
-                    Ok(id) => id,
+                    Ok(id) => Some(id),
                     Err(e) => {
                         warn!(err = %e, "failed to create scan record — stage tracking disabled");
-                        -1
+                        None
                     }
                 }
             } else {
-                -1
+                None
             }
         }
     };
 
     // Helper to persist stage (best-effort)
-    let advance_stage = |store: &Option<Store>, scan_id: i64, stage: &str, findings: &[Finding]| {
-        if scan_id < 0 {
-            return;
-        }
-        if let Some(ref s) = store {
-            if let Err(e) = s.update_scan_findings(scan_id, findings) {
-                warn!(err = %e, stage, "failed to persist findings at stage");
+    let advance_stage =
+        |store: &Option<Store>, scan_id: Option<i64>, stage: &str, findings: &[Finding]| {
+            let id = match scan_id {
+                Some(id) => id,
+                None => return,
+            };
+            if let Some(ref s) = store {
+                if let Err(e) = s.update_scan_findings(id, findings) {
+                    warn!(err = %e, stage, "failed to persist findings at stage");
+                }
+                if let Err(e) = s.update_scan_stage(id, stage) {
+                    warn!(err = %e, stage, "failed to update scan stage");
+                }
             }
-            if let Err(e) = s.update_scan_stage(scan_id, stage) {
-                warn!(err = %e, stage, "failed to update scan stage");
-            }
-        }
-    };
+        };
 
     // --- Stage: Scan ---
     if start_stage < PipelineStage::Scanned {
@@ -214,6 +220,7 @@ pub async fn run_pipeline(
             base_branch,
             scan_duration,
             rule_count,
+            scan_id,
             temp_dir,
         });
     }
@@ -270,6 +277,7 @@ pub async fn run_pipeline(
         base_branch,
         scan_duration,
         rule_count,
+        scan_id,
         temp_dir,
     })
 }
@@ -649,30 +657,43 @@ pub async fn finalize_and_post(
     );
     filter_dismissed(&config.storage.db_path, &mut result.review.findings);
 
-    // Persist scan results (BR-3: best-effort)
-    persist_scan(
-        &config.storage.db_path,
-        repo,
-        &result.branch,
-        &result.review.head_sha,
-        "review",
-        Some(pr),
-        &result.review,
-    );
+    // Recompute summary to reflect filtered findings
+    let payload = prepare_review_payload(result);
+    result.review.summary = payload.summary.clone();
 
-    let review = &result.review;
+    // Persist scan results (BR-3: best-effort), reusing existing scan_id if available
+    if let Some(sid) = result.scan_id {
+        if let Ok(store) = Store::open(&config.storage.db_path) {
+            if let Err(e) = store.update_scan_findings(sid, &result.review.findings) {
+                warn!(err = %e, "failed to update findings for finalization");
+            }
+            if let Err(e) = store.update_scan_stage(sid, "completed") {
+                warn!(err = %e, "failed to mark scan as completed");
+            }
+        }
+    } else {
+        persist_scan(
+            &config.storage.db_path,
+            repo,
+            &result.branch,
+            &result.review.head_sha,
+            "review",
+            Some(pr),
+            &result.review,
+        );
+    }
 
-    if review.findings.is_empty() {
-        github.post_comment(repo, pr, &review.summary).await?;
+    if result.review.findings.is_empty() {
+        github
+            .post_comment(repo, pr, &result.review.summary)
+            .await?;
         info!("clean summary posted for {repo}#{pr}");
     } else {
-        let payload = prepare_review_payload(result);
-
         github
             .post_review(
                 repo,
                 pr,
-                &review.head_sha,
+                &result.review.head_sha,
                 &payload.summary,
                 payload.inline_comments,
             )
@@ -683,7 +704,7 @@ pub async fn finalize_and_post(
         }
 
         info!(
-            total = review.findings.len(),
+            total = result.review.findings.len(),
             "review posted for {repo}#{pr}"
         );
     }
@@ -721,6 +742,7 @@ pub fn persist_scan(
         created_at: None,
         stage: "completed".into(),
         error_message: None,
+        failed_at_stage: None,
     };
 
     let scan_id = match store.insert_scan(&record) {
@@ -1330,6 +1352,7 @@ mod tests {
             base_branch: "main".into(),
             scan_duration: std::time::Duration::from_secs(1),
             rule_count: 10,
+            scan_id: None,
             temp_dir: None,
         };
         assert_eq!(result.review.pr_number, 42);

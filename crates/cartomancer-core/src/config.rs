@@ -267,6 +267,10 @@ impl AppConfig {
         if self.llm.max_concurrent_deepening == 0 {
             errors.push("llm.max_concurrent_deepening must be > 0");
         }
+        if self.serve.max_concurrent_reviews == 0 {
+            errors.push("serve.max_concurrent_reviews must be > 0");
+        }
+
         if matches!(self.llm.provider, LlmBackend::Anthropic) {
             let has_key =
                 self.llm.anthropic_api_key.is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok();
@@ -512,6 +516,17 @@ db_path = "/tmp/custom.db"
             std::env::remove_var("ANTHROPIC_API_KEY");
             let err = config.validate().unwrap_err();
             assert!(err.contains("anthropic_api_key required"), "got: {err}");
+        }
+
+        #[test]
+        fn zero_max_concurrent_reviews_rejected() {
+            let mut config = AppConfig::default();
+            config.serve.max_concurrent_reviews = 0;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("max_concurrent_reviews must be > 0"),
+                "got: {err}"
+            );
         }
 
         #[test]

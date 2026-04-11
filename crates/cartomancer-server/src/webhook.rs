@@ -100,21 +100,25 @@ async fn handle_webhook(
         "accepted webhook, spawning review"
     );
 
-    // 6. Spawn background review task
+    // 6. Acquire semaphore permit before spawning to bound concurrency
+    let semaphore = Arc::clone(&state.review_semaphore);
+    let permit = match semaphore.try_acquire_owned() {
+        Ok(p) => p,
+        Err(_) => {
+            warn!(
+                repo = %repo,
+                pr,
+                "review concurrency limit reached, rejecting webhook"
+            );
+            return StatusCode::SERVICE_UNAVAILABLE;
+        }
+    };
+
     let config = Arc::clone(&state.config);
     let token = state.github_token.clone();
-    let semaphore = Arc::clone(&state.review_semaphore);
 
     tokio::spawn(async move {
-        // Acquire permit — blocks if at capacity
-        let _permit = match semaphore.acquire().await {
-            Ok(p) => p,
-            Err(_) => {
-                tracing::error!(repo = %repo, pr, "review semaphore closed");
-                return;
-            }
-        };
-
+        let _permit = permit; // held for the duration of the review
         info!(repo = %repo, pr, "starting review");
         if let Err(e) = run_webhook_review(&config, &token, &repo, pr).await {
             tracing::error!(repo = %repo, pr, err = %e, "webhook review failed");

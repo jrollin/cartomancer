@@ -119,6 +119,11 @@ async fn cmd_review(
             &mut result.review.findings,
         );
         pipeline::filter_dismissed(&config.storage.db_path, &mut result.review.findings);
+
+        // Recompute summary to reflect filtered findings
+        let payload = pipeline::prepare_review_payload(&result);
+        result.review.summary = payload.summary.clone();
+
         pipeline::persist_scan(
             &config.storage.db_path,
             repo,
@@ -129,19 +134,17 @@ async fn cmd_review(
             &result.review,
         );
 
-        let review = &result.review;
         match format {
             OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(review)?);
+                println!("{}", serde_json::to_string_pretty(&result.review)?);
             }
             OutputFormat::Text => {
-                if review.findings.is_empty() {
-                    println!("{}", review.summary);
+                if result.review.findings.is_empty() {
+                    println!("{}", result.review.summary);
                 } else {
-                    let payload = pipeline::prepare_review_payload(&result);
                     println!("{}", payload.summary);
                     println!();
-                    print_findings(&review.findings);
+                    print_findings(&result.review.findings);
                     if !payload.off_diff_bodies.is_empty() {
                         println!("\n--- Off-diff findings ---\n");
                         for body in &payload.off_diff_bodies {

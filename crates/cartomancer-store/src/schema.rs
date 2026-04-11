@@ -140,6 +140,9 @@ fn migrate_v4(conn: &Connection) -> rusqlite::Result<()> {
     if !columns.contains(&"error_message".to_string()) {
         conn.execute_batch("ALTER TABLE scans ADD COLUMN error_message TEXT;")?;
     }
+    if !columns.contains(&"failed_at_stage".to_string()) {
+        conn.execute_batch("ALTER TABLE scans ADD COLUMN failed_at_stage TEXT;")?;
+    }
 
     conn.pragma_update(None, "user_version", 4)?;
     Ok(())
