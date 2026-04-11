@@ -89,6 +89,20 @@ pub async fn run_pipeline(
                 anyhow::bail!("scan {sid} already completed — nothing to resume");
             }
 
+            // Verify the stored scan matches the current request
+            if scan.repo != repo {
+                anyhow::bail!(
+                    "scan {sid} belongs to repo '{}', not '{repo}' — cannot resume",
+                    scan.repo
+                );
+            }
+            if scan.pr_number != Some(pr_number) {
+                anyhow::bail!(
+                    "scan {sid} belongs to PR #{}, not #{pr_number} — cannot resume",
+                    scan.pr_number.map_or("none".into(), |n| n.to_string())
+                );
+            }
+
             // Load persisted findings to resume from
             let stored = store.get_findings(sid)?;
             let resumed_findings = stored_to_findings(&stored);
