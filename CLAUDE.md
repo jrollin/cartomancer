@@ -37,7 +37,7 @@ cartomancer-server (binary)
 - `AppConfig` (core::config) — deserialized from `.cartomancer.toml`
 - `StorageConfig` (core::config) — `db_path` for finding persistence
 - `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
-- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations
+- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic; `AnthropicProvider::with_base_url` for test overrides
 - `PrMetadata` (github::types) — PR head/base SHA, refs, title from GitHub API
 - `ReviewComment` (github::types) — inline comment for PR Review API
 - `CartogEnricher` (graph::enricher) — wraps cartog::db::Database

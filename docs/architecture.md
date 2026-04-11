@@ -105,12 +105,14 @@ LlmProvider (async trait)
     │     Default for local development
     │
     └── AnthropicProvider
-          POST https://api.anthropic.com/v1/messages
+          POST {base_url}/v1/messages (default: https://api.anthropic.com)
           x-api-key header, anthropic-version: 2023-06-01
-          For production use
+          max_tokens validated: 1..=128,000
+          For production use (with_base_url() for testing)
 ```
 
 Provider selected via `llm.provider` in config. Factory: `create_provider(&LlmConfig)`.
+`create_provider` validates `max_tokens` before constructing the Anthropic provider.
 
 ## LLM Deepening
 

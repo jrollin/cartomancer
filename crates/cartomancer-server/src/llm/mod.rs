@@ -52,6 +52,7 @@ pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
             Ok(Box::new(ollama::OllamaProvider::new(base_url, model)))
         }
         cartomancer_core::config::LlmBackend::Anthropic => {
+            anthropic::AnthropicProvider::validate_max_tokens(config.max_tokens)?;
             let api_key = config
                 .anthropic_api_key
                 .clone()
@@ -424,6 +425,46 @@ mod tests {
         assert_eq!(f.suggested_fix.as_deref(), Some("-old\n+new\n"));
         assert!(f.agent_prompt.is_some());
         assert!(f.agent_prompt.as_ref().unwrap().contains("@src/lib.rs"));
+    }
+
+    #[test]
+    fn create_provider_rejects_zero_max_tokens() {
+        let config = LlmConfig {
+            provider: cartomancer_core::config::LlmBackend::Anthropic,
+            anthropic_api_key: Some("sk-test".into()),
+            max_tokens: 0,
+            ..Default::default()
+        };
+        match create_provider(&config) {
+            Ok(_) => panic!("should reject max_tokens=0"),
+            Err(e) => assert!(e.to_string().contains("must be between"), "{e}"),
+        }
+    }
+
+    #[test]
+    fn create_provider_rejects_excessive_max_tokens() {
+        let config = LlmConfig {
+            provider: cartomancer_core::config::LlmBackend::Anthropic,
+            anthropic_api_key: Some("sk-test".into()),
+            max_tokens: 200_000,
+            ..Default::default()
+        };
+        match create_provider(&config) {
+            Ok(_) => panic!("should reject max_tokens=200000"),
+            Err(e) => assert!(e.to_string().contains("must be between"), "{e}"),
+        }
+    }
+
+    #[test]
+    fn create_provider_accepts_valid_max_tokens() {
+        let config = LlmConfig {
+            provider: cartomancer_core::config::LlmBackend::Anthropic,
+            anthropic_api_key: Some("sk-test".into()),
+            max_tokens: 4096,
+            ..Default::default()
+        };
+        let provider = create_provider(&config).unwrap();
+        assert_eq!(provider.name(), "anthropic");
     }
 
     #[tokio::test]

@@ -130,6 +130,8 @@ impl LlmProvider for OllamaProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn chat_request_serialization() {
@@ -145,5 +147,120 @@ mod tests {
         assert!(json.contains("gemma4"));
         assert!(json.contains("hello"));
         assert!(json.contains(r#""stream":false"#));
+    }
+
+    // --- HTTP mocking tests ---
+
+    #[tokio::test]
+    async fn health_check_passes_when_model_available() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"models":[{"name":"gemma4:latest"},{"name":"llama3:latest"}]}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        provider.health_check().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_check_passes_with_exact_name_match() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string(r#"{"models":[{"name":"gemma4"}]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        provider.health_check().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn health_check_fails_when_model_missing() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"models":[{"name":"llama3:latest"}]}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let err = provider.health_check().await.unwrap_err();
+        assert!(err.to_string().contains("not found"));
+        assert!(err.to_string().contains("ollama pull gemma4"));
+    }
+
+    #[tokio::test]
+    async fn health_check_fails_when_server_returns_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let err = provider.health_check().await.unwrap_err();
+        assert!(err.to_string().contains("health check failed"));
+    }
+
+    #[tokio::test]
+    async fn complete_returns_message_content() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(
+                r#"{"message":{"role":"assistant","content":"This is a security issue."}}"#,
+            ))
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let result = provider.complete("analyze this").await.unwrap();
+        assert_eq!(result, "This is a security issue.");
+    }
+
+    #[tokio::test]
+    async fn complete_fails_on_server_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("internal error"))
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let err = provider.complete("test").await.unwrap_err();
+        assert!(err.to_string().contains("error"));
+    }
+
+    #[tokio::test]
+    async fn complete_sends_stream_false() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .and(wiremock::matchers::body_partial_json(serde_json::json!({
+                "model": "gemma4",
+                "stream": false
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"message":{"role":"assistant","content":"ok"}}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let result = provider.complete("test").await.unwrap();
+        assert_eq!(result, "ok");
     }
 }
