@@ -14,7 +14,7 @@ Cartomancer combines [opengrep](https://github.com/opengrep/opengrep) static ana
 
 ```text
 GitHub webhook → fetch diff → opengrep scan → cartog enrich
-  → escalate severity → LLM deepen (analysis + suggested fix + agent prompt)
+  → escalate severity → LLM deepen (conditional: analysis + suggested fix + agent prompt)
   → regression check → dismiss filter → persist + post categorized comments
 ```
 

@@ -84,8 +84,8 @@ mod tests {
                 escalation_reasons: vec![],
                 is_new: None,
                 enclosing_context: None,
-                suggested_fix: None,
-                agent_prompt: None,
+                suggested_fix: Some("-old\n+new".into()),
+                agent_prompt: Some("In @src/lib.rs around lines 1-1, fix it.".into()),
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,
@@ -95,6 +95,14 @@ mod tests {
         assert_eq!(back.pr_number, 42);
         assert_eq!(back.findings.len(), 1);
         assert_eq!(back.summary, "1 finding");
+        assert_eq!(
+            back.findings[0].suggested_fix.as_deref(),
+            Some("-old\n+new")
+        );
+        assert_eq!(
+            back.findings[0].agent_prompt.as_deref(),
+            Some("In @src/lib.rs around lines 1-1, fix it.")
+        );
     }
 
     #[test]

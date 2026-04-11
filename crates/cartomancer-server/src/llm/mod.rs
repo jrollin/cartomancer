@@ -158,9 +158,19 @@ pub fn parse_llm_response(response: &str) -> (String, Option<String>) {
     };
 
     let content_start = start_pos + marker_len;
-    let closing = response[content_start..].find("```");
 
-    let Some(closing_offset) = closing else {
+    // Line-aware search: only match closing ``` that appears on its own line
+    let mut closing_offset = None;
+    let mut offset = 0;
+    for line in response[content_start..].split_inclusive('\n') {
+        if line.trim() == "```" {
+            closing_offset = Some(offset);
+            break;
+        }
+        offset += line.len();
+    }
+
+    let Some(closing_offset) = closing_offset else {
         // No closing fence: treat entire response as analysis
         return (response.trim().to_string(), None);
     };
@@ -319,6 +329,16 @@ mod tests {
     }
 
     #[test]
+    fn parse_response_backticks_inside_diff_not_treated_as_closing() {
+        let response = "Analysis.\n\n```diff\n-let s = \"```\";\n+let s = \"fixed\";\n```\n";
+        let (analysis, fix) = parse_llm_response(response);
+        assert_eq!(analysis, "Analysis.");
+        let fix = fix.expect("should extract diff");
+        assert!(fix.contains("-let s = \"```\";"));
+        assert!(fix.contains("+let s = \"fixed\";"));
+    }
+
+    #[test]
     fn build_agent_prompt_includes_required_fields() {
         let f = make_finding();
         let fix = "-old line\n+new line";
@@ -348,6 +368,20 @@ mod tests {
         // Must not panic
         let prompt = build_deepening_prompt(&f);
         assert!(prompt.contains("[truncated]"));
+    }
+
+    #[test]
+    fn build_prompt_truncates_4byte_emoji_safely() {
+        let mut f = make_finding();
+        // '🔥' is 4 bytes in UTF-8; 501 emojis = 2004 bytes, boundary at 2000 = mid-char
+        let ctx = "🔥".repeat(501);
+        assert_eq!(ctx.len(), 2004);
+        f.enclosing_context = Some(ctx);
+        // Must not panic
+        let prompt = build_deepening_prompt(&f);
+        assert!(prompt.contains("[truncated]"));
+        // Should contain exactly 500 emojis (2000 bytes)
+        assert!(prompt.contains(&"🔥".repeat(500)));
     }
 
     #[test]

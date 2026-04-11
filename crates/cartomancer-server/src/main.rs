@@ -169,16 +169,24 @@ async fn cmd_review(
 
     let review = &result.review;
     if dry_run {
-        // Output ReviewResult as JSON, skip posting
         match format {
             OutputFormat::Json => {
                 println!("{}", serde_json::to_string_pretty(review)?);
             }
             OutputFormat::Text => {
-                println!("{}", review.summary);
-                if !review.findings.is_empty() {
+                if review.findings.is_empty() {
+                    println!("{}", review.summary);
+                } else {
+                    let payload = prepare_review_payload(&result);
+                    println!("{}", payload.summary);
                     println!();
                     print_findings(&review.findings);
+                    if !payload.off_diff_bodies.is_empty() {
+                        println!("\n--- Off-diff findings ---\n");
+                        for body in &payload.off_diff_bodies {
+                            println!("{body}\n");
+                        }
+                    }
                 }
             }
         }

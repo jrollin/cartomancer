@@ -111,12 +111,13 @@ pub async fn run_pipeline(
     if findings.is_empty() {
         let branch = pr_meta.head_ref.clone();
         let base_branch = pr_meta.base_ref.clone();
+        let scan_duration = pipeline_start.elapsed();
         let review = ReviewResult {
             pr_number,
             repo_full_name: repo.to_string(),
             head_sha: pr_meta.head_sha,
             findings: vec![],
-            summary: comment::format_clean_summary(opengrep_elapsed, rule_count),
+            summary: comment::format_clean_summary(scan_duration, rule_count),
             status: ReviewStatus::Completed,
         };
         return Ok(PipelineResult {
@@ -124,7 +125,7 @@ pub async fn run_pipeline(
             diff,
             branch,
             base_branch,
-            scan_duration: opengrep_elapsed,
+            scan_duration,
             rule_count,
             temp_dir,
         });

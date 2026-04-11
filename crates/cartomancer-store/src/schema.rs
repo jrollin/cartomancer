@@ -105,15 +105,20 @@ fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
 }
 
 fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
-    conn.execute_batch(
-        "
-        ALTER TABLE findings ADD COLUMN suggested_fix TEXT;
-        ALTER TABLE findings ADD COLUMN agent_prompt TEXT;
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(findings)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
 
-        PRAGMA user_version = 3;
-        ",
-    )?;
+    if !columns.contains(&"suggested_fix".to_string()) {
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN suggested_fix TEXT;")?;
+    }
+    if !columns.contains(&"agent_prompt".to_string()) {
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN agent_prompt TEXT;")?;
+    }
 
+    conn.pragma_update(None, "user_version", 3)?;
     Ok(())
 }
 
