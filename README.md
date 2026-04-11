@@ -35,43 +35,46 @@ Opengrep must be in your `PATH`. Without it, Cartomancer cannot run.
 # Build
 cargo build --release
 
+# Check that all dependencies and config are healthy
+cartomancer doctor
+
 # Scan a local directory (no GitHub token needed)
-cartomancer-server scan /path/to/project
+cartomancer scan /path/to/project
 
 # With cartog graph enrichment (recommended)
 cd /path/to/project
 cartog index .
-cartomancer-server scan .
+cartomancer scan .
 
 # With LLM deepening (Ollama, local)
 ollama pull gemma4
-cartomancer-server scan .  # critical findings get AI analysis
+cartomancer scan .  # critical findings get AI analysis
 
 # Configure (for GitHub PR reviews)
 cp .cartomancer.toml .cartomancer.local.toml
 # Edit .cartomancer.local.toml with your GitHub token
 
 # Review a PR (one-shot)
-cartomancer-server review owner/repo 42
+cartomancer review owner/repo 42
 
 # Browse scan history
-cartomancer-server history
+cartomancer history
 
 # Browse findings from a scan
-cartomancer-server findings 1
+cartomancer findings 1
 
 # Search findings across all scans
-cartomancer-server findings --rule sql --severity error
+cartomancer findings --rule sql --severity error
 
 # Dismiss a false positive (finding #3 from scan 1)
-cartomancer-server dismiss 1 3 --reason "false positive"
+cartomancer dismiss 1 3 --reason "false positive"
 
 # List and remove dismissals
-cartomancer-server dismissed
-cartomancer-server undismiss 1
+cartomancer dismissed
+cartomancer undismiss 1
 
 # Start webhook server
-cartomancer-server serve --port 3000
+cartomancer serve --port 3000
 ```
 
 ## Configuration

@@ -11,6 +11,7 @@ cartomancer dismiss <scan-id> <index>          Dismiss a false positive
 cartomancer dismissed                          List dismissed findings
 cartomancer undismiss <dismissal-id>           Remove a dismissal
 cartomancer serve                              Webhook server for GitHub events
+cartomancer doctor                             Check dependencies and config health
 ```
 
 ## Pipeline Stages

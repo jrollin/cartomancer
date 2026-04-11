@@ -6,6 +6,7 @@
 mod cli;
 mod comment;
 mod config;
+mod doctor;
 mod llm;
 mod opengrep;
 mod pipeline;
@@ -43,6 +44,7 @@ async fn main() -> Result<()> {
     let config = config::load_config(&cli.config)?;
 
     match cli.command {
+        Command::Doctor { format } => cmd_doctor(&config, &format).await,
         Command::Scan { path, format } => cmd_scan(&path, &config, &format).await,
         Command::Serve { port } => cmd_serve(port, config).await,
         Command::Review {
@@ -81,6 +83,24 @@ async fn main() -> Result<()> {
         Command::Dismissed { format } => cmd_dismissed(&format, &config),
         Command::Undismiss { dismissal_id } => cmd_undismiss(dismissal_id, &config),
     }
+}
+
+async fn cmd_doctor(
+    config: &cartomancer_core::config::AppConfig,
+    format: &OutputFormat,
+) -> Result<()> {
+    let results = doctor::run_checks(config).await;
+
+    match format {
+        OutputFormat::Text => doctor::print_text(&results),
+        OutputFormat::Json => doctor::print_json(&results)?,
+    }
+
+    if results.iter().any(|r| r.is_fail()) {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 async fn cmd_review(
