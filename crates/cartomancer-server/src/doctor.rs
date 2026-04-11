@@ -14,9 +14,13 @@ pub struct CheckResult {
     pub detail: String,
 }
 
+/// Outcome of a single doctor check.
 pub enum CheckStatus {
+    /// Check passed.
     Ok,
+    /// Non-blocking issue (e.g. optional dependency missing).
     Warn,
+    /// Blocking failure — the tool cannot operate correctly.
     Fail,
 }
 
@@ -31,6 +35,7 @@ impl fmt::Display for CheckStatus {
 }
 
 impl CheckResult {
+    /// Build a passing check result.
     fn ok(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
@@ -39,6 +44,7 @@ impl CheckResult {
         }
     }
 
+    /// Build a warning check result (non-blocking).
     fn warn(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
@@ -47,6 +53,7 @@ impl CheckResult {
         }
     }
 
+    /// Build a failing check result (blocks operation).
     fn fail(name: &'static str, detail: impl Into<String>) -> Self {
         Self {
             name,
@@ -55,6 +62,7 @@ impl CheckResult {
         }
     }
 
+    /// Text icon for checklist display: `[+]`, `[~]`, or `[-]`.
     fn icon(&self) -> &'static str {
         match self.status {
             CheckStatus::Ok => "[+]",
@@ -63,6 +71,7 @@ impl CheckResult {
         }
     }
 
+    /// Returns `true` when the check status is `Fail`.
     pub fn is_fail(&self) -> bool {
         matches!(self.status, CheckStatus::Fail)
     }
@@ -132,6 +141,7 @@ pub fn print_json(results: &[CheckResult]) -> Result<()> {
 
 // --- Individual checks ---
 
+/// Validate the loaded configuration via `AppConfig::validate()`.
 fn check_config(config: &AppConfig) -> CheckResult {
     match config.validate() {
         Ok(()) => CheckResult::ok("config", "valid"),
@@ -139,6 +149,7 @@ fn check_config(config: &AppConfig) -> CheckResult {
     }
 }
 
+/// Check that a GitHub token is available (config or `GITHUB_TOKEN` env).
 fn check_github_token(config: &AppConfig) -> CheckResult {
     let has_token = config
         .github
@@ -160,6 +171,7 @@ fn check_github_token(config: &AppConfig) -> CheckResult {
     }
 }
 
+/// Verify that `opengrep` is in PATH and responds to `--version` within 10s.
 async fn check_opengrep() -> CheckResult {
     let fut = tokio::process::Command::new("opengrep")
         .arg("--version")
@@ -208,6 +220,7 @@ async fn check_opengrep() -> CheckResult {
     }
 }
 
+/// Check whether `cartog` CLI is available (optional — warns if missing).
 fn check_cartog() -> CheckResult {
     match std::process::Command::new("cartog")
         .arg("--version")
@@ -253,6 +266,7 @@ fn check_cartog() -> CheckResult {
     }
 }
 
+/// Create the configured LLM provider and run its health check.
 async fn check_llm_provider(config: &AppConfig) -> CheckResult {
     let provider_name = format!("{:?}", config.llm.provider).to_lowercase();
     match crate::llm::create_provider(&config.llm) {
@@ -270,6 +284,7 @@ async fn check_llm_provider(config: &AppConfig) -> CheckResult {
     }
 }
 
+/// Verify that the SQLite store can be opened at the configured `db_path`.
 fn check_storage(config: &AppConfig) -> CheckResult {
     match cartomancer_store::store::Store::open(&config.storage.db_path) {
         Ok(_) => CheckResult::ok("storage", config.storage.db_path.to_string()),
