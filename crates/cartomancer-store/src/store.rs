@@ -1164,4 +1164,45 @@ mod tests {
         let stored = store.get_scan(scan_id).unwrap().unwrap();
         assert_eq!(stored.stage, "pending");
     }
+
+    #[test]
+    fn store_update_scan_findings_with_graph_context() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let mut finding = sample_finding();
+        finding.graph_context = Some(GraphContext {
+            symbol_name: Some("check".into()),
+            callers: vec!["main".into()],
+            blast_radius: 5,
+            is_public_api: true,
+            domain_tags: vec!["auth".into()],
+        });
+        finding.escalation_reasons = vec!["high blast radius".into()];
+
+        store.update_scan_findings(scan_id, &[finding]).unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].graph_context_json.is_some());
+        assert!(stored[0].escalation_reasons_json.is_some());
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.finding_count, 1);
+    }
+
+    #[test]
+    fn store_update_scan_findings_empty_clears() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        store.insert_findings(scan_id, &[sample_finding()]).unwrap();
+        assert_eq!(store.get_findings(scan_id).unwrap().len(), 1);
+
+        store.update_scan_findings(scan_id, &[]).unwrap();
+        assert_eq!(store.get_findings(scan_id).unwrap().len(), 0);
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.finding_count, 0);
+    }
 }

@@ -1208,6 +1208,108 @@ mod tests {
         }
     }
 
+    mod stored_to_findings_tests {
+        use super::*;
+        use cartomancer_store::types::StoredFinding;
+
+        fn sample_stored_finding() -> StoredFinding {
+            StoredFinding {
+                id: Some(1),
+                scan_id: 1,
+                fingerprint: "fp123".into(),
+                rule_id: "test-rule".into(),
+                severity: "error".into(),
+                file_path: "src/lib.rs".into(),
+                start_line: 10,
+                end_line: 12,
+                message: "test finding".into(),
+                snippet: "let x = 1;".into(),
+                cwe: Some("CWE-798".into()),
+                graph_context_json: None,
+                llm_analysis: Some("analysis text".into()),
+                escalation_reasons_json: None,
+                enclosing_context: Some("fn main() { ... }".into()),
+                suggested_fix: Some("-old\n+new".into()),
+                agent_prompt: Some("fix it".into()),
+            }
+        }
+
+        #[test]
+        fn converts_basic_fields() {
+            let stored = vec![sample_stored_finding()];
+            let findings = stored_to_findings(&stored);
+
+            assert_eq!(findings.len(), 1);
+            let f = &findings[0];
+            assert_eq!(f.rule_id, "test-rule");
+            assert_eq!(f.severity, cartomancer_core::severity::Severity::Error);
+            assert_eq!(f.file_path, "src/lib.rs");
+            assert_eq!(f.start_line, 10);
+            assert_eq!(f.end_line, 12);
+            assert_eq!(f.message, "test finding");
+            assert_eq!(f.snippet, "let x = 1;");
+            assert_eq!(f.cwe.as_deref(), Some("CWE-798"));
+            assert_eq!(f.llm_analysis.as_deref(), Some("analysis text"));
+            assert_eq!(f.enclosing_context.as_deref(), Some("fn main() { ... }"));
+            assert_eq!(f.suggested_fix.as_deref(), Some("-old\n+new"));
+            assert_eq!(f.agent_prompt.as_deref(), Some("fix it"));
+            assert!(f.graph_context.is_none());
+            assert!(f.escalation_reasons.is_empty());
+            assert!(f.is_new.is_none());
+        }
+
+        #[test]
+        fn invalid_severity_falls_back_to_warning() {
+            let mut sf = sample_stored_finding();
+            sf.severity = "unknown_level".into();
+            let findings = stored_to_findings(&[sf]);
+            assert_eq!(
+                findings[0].severity,
+                cartomancer_core::severity::Severity::Warning
+            );
+        }
+
+        #[test]
+        fn parses_graph_context_json() {
+            let mut sf = sample_stored_finding();
+            sf.graph_context_json = Some(
+                r#"{"symbol_name":"check","callers":["main"],"blast_radius":5,"is_public_api":true,"domain_tags":["auth"]}"#.into(),
+            );
+            let findings = stored_to_findings(&[sf]);
+            let ctx = findings[0].graph_context.as_ref().unwrap();
+            assert_eq!(ctx.blast_radius, 5);
+            assert_eq!(ctx.callers, vec!["main"]);
+            assert!(ctx.is_public_api);
+        }
+
+        #[test]
+        fn parses_escalation_reasons_json() {
+            let mut sf = sample_stored_finding();
+            sf.escalation_reasons_json = Some(r#"["high blast radius","auth domain"]"#.into());
+            let findings = stored_to_findings(&[sf]);
+            assert_eq!(
+                findings[0].escalation_reasons,
+                vec!["high blast radius", "auth domain"]
+            );
+        }
+
+        #[test]
+        fn invalid_json_fields_are_none() {
+            let mut sf = sample_stored_finding();
+            sf.graph_context_json = Some("not json".into());
+            sf.escalation_reasons_json = Some("{bad".into());
+            let findings = stored_to_findings(&[sf]);
+            assert!(findings[0].graph_context.is_none());
+            assert!(findings[0].escalation_reasons.is_empty());
+        }
+
+        #[test]
+        fn empty_input_returns_empty() {
+            let findings = stored_to_findings(&[]);
+            assert!(findings.is_empty());
+        }
+    }
+
     #[test]
     fn pipeline_result_has_correct_fields() {
         let review = ReviewResult {

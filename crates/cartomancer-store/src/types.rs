@@ -76,3 +76,20 @@ pub struct FindingFilter {
     pub file: Option<String>,
     pub branch: Option<String>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_stage_is_completed() {
+        assert_eq!(default_stage(), "completed");
+    }
+
+    #[test]
+    fn scan_record_default_stage_via_serde() {
+        let json = r#"{"id":null,"repo":"r","branch":"b","commit_sha":"s","command":"scan","pr_number":null,"finding_count":0,"summary":"s","created_at":null,"error_message":null}"#;
+        let record: ScanRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.stage, "completed");
+    }
+}

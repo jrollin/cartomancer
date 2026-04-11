@@ -115,6 +115,12 @@ mod tests {
     }
 
     #[test]
+    fn verify_odd_length_hex_rejected() {
+        // Odd-length hex in signature should fail (exercises decode_hex odd-length path)
+        assert!(!verify_signature("secret", b"data", "sha256=abc"));
+    }
+
+    #[test]
     fn verify_empty_payload() {
         let secret = "test-secret";
         let sig = sign(secret, b"");
