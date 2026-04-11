@@ -13,7 +13,7 @@ Stores scan results, findings, and dismissals. Enables regression detection (new
 
 ## Schema
 
-Three tables: `scans` (scan metadata), `findings` (per-finding data with fingerprint), `dismissals` (false positive suppression). Indexed on fingerprint columns for O(log n) lookups.
+Three tables (schema v3): `scans` (scan metadata), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Indexed on fingerprint columns for O(log n) lookups.
 
 ## Usage
 

@@ -35,8 +35,9 @@ cartomancer review owner/repo 42 --work-dir /path/to/repo
 2. Run opengrep with `--baseline-commit` (only new findings)
 3. Enrich with [cartog](https://crates.io/crates/cartog) blast radius and caller analysis
 4. Escalate severity for findings in auth/payment flows or with large blast radius
-5. Optionally deepen high-severity findings with LLM (Ollama or Anthropic)
-6. Post PR review with inline comments + summary
+5. Optionally deepen high-severity findings with LLM (Ollama or Anthropic), generating suggested fixes and AI agent prompts
+6. Classify findings as Actionable or Nitpick
+7. Post PR review with categorized inline comments (collapsible fixes + agent prompts), off-diff caution banners, and summary with actionable counts
 
 ## Configuration
 

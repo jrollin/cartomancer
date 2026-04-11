@@ -256,6 +256,8 @@ fn parse_output(output: &[u8], elapsed: Duration) -> Result<Vec<Finding>> {
             escalation_reasons: vec![],
             is_new: None,
             enclosing_context: r.extra.enclosing_context,
+            suggested_fix: None,
+            agent_prompt: None,
         })
         .collect();
 

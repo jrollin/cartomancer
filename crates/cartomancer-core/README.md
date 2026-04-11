@@ -6,7 +6,7 @@ No I/O, no async — just types, validation, and serialization.
 
 ## Key Types
 
-- `Finding` — opengrep finding with optional graph context and LLM analysis
+- `Finding` — opengrep finding with optional graph context, LLM analysis, suggested fix, and agent prompt
 - `GraphContext` — blast radius, callers, domain tags from cartog
 - `Severity` — Info < Warning < Error < Critical (with `Ord`, `Display`, `FromStr`)
 - `AppConfig` — deserialized from `.cartomancer.toml`

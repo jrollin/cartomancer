@@ -122,6 +122,8 @@ mod tests {
             escalation_reasons: vec![],
             is_new: None,
             enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
         }
     }
 
@@ -158,6 +160,8 @@ mod tests {
             escalation_reasons: vec![],
             is_new: None,
             enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
         };
         escalator.escalate(&mut f);
         assert_eq!(f.severity, Severity::Warning);

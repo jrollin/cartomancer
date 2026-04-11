@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding new migrations.
-pub const CURRENT_VERSION: i32 = 2;
+pub const CURRENT_VERSION: i32 = 3;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
 ///
@@ -28,6 +28,9 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if version < 2 {
         migrate_v2(conn)?;
+    }
+    if version < 3 {
+        migrate_v3(conn)?;
     }
 
     Ok(())
@@ -98,6 +101,24 @@ fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
         ",
     )?;
 
+    Ok(())
+}
+
+fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(findings)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !columns.contains(&"suggested_fix".to_string()) {
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN suggested_fix TEXT;")?;
+    }
+    if !columns.contains(&"agent_prompt".to_string()) {
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN agent_prompt TEXT;")?;
+    }
+
+    conn.pragma_update(None, "user_version", 3)?;
     Ok(())
 }
 
@@ -226,6 +247,8 @@ mod tests {
             "llm_analysis",
             "escalation_reasons_json",
             "enclosing_context",
+            "suggested_fix",
+            "agent_prompt",
         ];
         for col in expected {
             assert!(columns.contains(&col.to_string()), "missing column: {col}");
@@ -296,5 +319,24 @@ mod tests {
             result.is_err(),
             "FK constraint should reject non-existent scan_id"
         );
+    }
+
+    #[test]
+    fn schema_migrate_v3_is_resumable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate partial v3 state: manually add one column, reset version to 2
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN extra_col TEXT;")
+            .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        // Re-running migrate should not fail even though v3 columns already exist
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
     }
 }

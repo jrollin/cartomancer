@@ -29,6 +29,12 @@ pub struct Finding {
     /// Enclosing function/class body from opengrep `--output-enclosing-context`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enclosing_context: Option<String>,
+    /// Suggested fix as unified diff (populated by LLM deepening).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<String>,
+    /// Self-contained prompt for AI agents to apply the fix.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_prompt: Option<String>,
 }
 
 /// Blast radius and caller context from cartog.
@@ -62,9 +68,13 @@ mod tests {
             escalation_reasons: vec![],
             is_new: None,
             enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
         };
         assert!(f.graph_context.is_none());
         assert!(f.llm_analysis.is_none());
         assert!(f.escalation_reasons.is_empty());
+        assert!(f.suggested_fix.is_none());
+        assert!(f.agent_prompt.is_none());
     }
 }

@@ -30,7 +30,7 @@ cartomancer-server (binary)
 
 ## Key Types
 
-- `Finding` (core::finding) — opengrep finding + optional graph context + LLM analysis
+- `Finding` (core::finding) — opengrep finding + optional graph context + LLM analysis + suggested fix + agent prompt
 - `GraphContext` (core::finding) — blast radius, callers, domain tags from cartog
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
@@ -44,7 +44,8 @@ cartomancer-server (binary)
 - `SeverityEscalator` (graph::escalator) — blast radius + domain → severity upgrade
 - `Store` (store::store) — SQLite persistence: scan/finding CRUD, dismissals, baselines
 - `ScanRecord` / `StoredFinding` / `Dismissal` (store::types) — persistence DTOs
-- `PipelineResult` (server::pipeline) — ReviewResult + parsed diff + branch info + temp dir handle
+- `CommentCategory` (server::comment) — Actionable or Nitpick (display concern, not on Finding)
+- `PipelineResult` (server::pipeline) — ReviewResult + parsed diff + branch info + scan duration + rule count + temp dir handle
 
 ## CLI Commands
 
@@ -68,11 +69,11 @@ cartomancer serve [--port <n>]                    # not yet implemented
 5. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns from config)
 6. Enrich with cartog (impact, refs, callers, domain detection)
 7. Escalate severity (blast radius thresholds + domain tags)
-8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3)
+8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3) — analysis + suggested fix + agent prompt
 9. Regression check (compare fingerprints against base branch baseline)
 10. Dismiss filter (remove dismissed findings by fingerprint)
 11. Persist scan (write to `.cartomancer.db`, best-effort)
-12. Post review (inline comments on diff lines, off-diff as regular comments)
+12. Post review (categorized inline comments on diff lines, off-diff with caution banners, summary with actionable counts)
 
 `--dry-run` skips step 12, outputs ReviewResult to stdout.
 

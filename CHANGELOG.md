@@ -1,3 +1,20 @@
+## [Unreleased]
+
+### 🚀 Features
+
+- *(llm)* LLM deepening now requests suggested fixes as ```diff blocks alongside impact analysis
+- *(llm)* Add response parser (`parse_llm_response`) to split analysis from fix using fence detection
+- *(llm)* Add agent prompt generation (`build_agent_prompt`) — self-contained instructions for AI tools
+- *(llm)* Truncate enclosing context to 2000 chars (UTF-8 safe) to bound token usage
+- *(comment)* Classify findings as Actionable (has fix OR severity >= Error) or Nitpick
+- *(comment)* Inline comments include category label, collapsible suggested fix, and collapsible agent prompt
+- *(comment)* Off-diff findings posted with `[!CAUTION]` banner and file:line location
+- *(comment)* PR summary includes actionable count header, category breakdown, and collapsible off-diff listing
+- *(comment)* Escape triple backticks in fenced code blocks to prevent markdown injection
+- *(store)* v3 schema migration: `suggested_fix` and `agent_prompt` columns in findings table
+- *(pipeline)* `PipelineResult` includes `scan_duration` and `rule_count` for summary regeneration
+- *(server)* Extract `prepare_review_payload` for off-diff splitting and summary regeneration
+
 ## [0.4.0] - 2026-04-10
 
 ### 🚀 Features
