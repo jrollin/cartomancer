@@ -92,12 +92,17 @@ async fn cmd_review(
     format: &OutputFormat,
     config: &cartomancer_core::config::AppConfig,
 ) -> Result<()> {
-    // Resolve GitHub token
+    // Resolve GitHub token (skip empty/whitespace values)
     let token = config
         .github
         .token
         .clone()
-        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::env::var("GITHUB_TOKEN")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "GitHub token required: set GITHUB_TOKEN env var or github.token in config"
@@ -124,15 +129,23 @@ async fn cmd_review(
         let payload = pipeline::prepare_review_payload(&result);
         result.review.summary = payload.summary.clone();
 
-        pipeline::persist_scan(
-            &config.storage.db_path,
-            repo,
-            &result.branch,
-            &result.review.head_sha,
-            "review",
-            Some(pr),
-            &result.review,
-        );
+        // Persist: update existing scan if tracked, otherwise insert new
+        if let Some(sid) = result.scan_id {
+            if let Ok(store) = cartomancer_store::store::Store::open(&config.storage.db_path) {
+                let _ = store.update_scan_findings(sid, &result.review.findings);
+                let _ = store.update_scan_stage(sid, "completed");
+            }
+        } else {
+            pipeline::persist_scan(
+                &config.storage.db_path,
+                repo,
+                &result.branch,
+                &result.review.head_sha,
+                "review",
+                Some(pr),
+                &result.review,
+            );
+        }
 
         match format {
             OutputFormat::Json => {

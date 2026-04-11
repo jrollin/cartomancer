@@ -184,11 +184,32 @@ pub async fn run_pipeline(
             }
         };
 
+    // Helper to record failure metadata (best-effort)
+    let record_failure =
+        |store: &Option<Store>, scan_id: Option<i64>, stage: &str, err: &anyhow::Error| {
+            if let (Some(id), Some(ref s)) = (scan_id, store) {
+                if let Err(e) = s.mark_scan_failed(id, stage, &err.to_string()) {
+                    warn!(err = %e, "failed to record scan failure");
+                }
+            }
+        };
+
     // --- Stage: Scan ---
     if start_stage < PipelineStage::Scanned {
         let opengrep_start = Instant::now();
-        findings =
-            opengrep::run_opengrep(&work_str, &config.opengrep, Some(&pr_meta.base_sha)).await?;
+        findings = match opengrep::run_opengrep(
+            &work_str,
+            &config.opengrep,
+            Some(&pr_meta.base_sha),
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                record_failure(&store, scan_id, "scanned", &e);
+                return Err(e);
+            }
+        };
         let opengrep_elapsed = opengrep_start.elapsed();
         info!(
             findings = findings.len(),
@@ -661,14 +682,11 @@ pub async fn finalize_and_post(
     let payload = prepare_review_payload(result);
     result.review.summary = payload.summary.clone();
 
-    // Persist scan results (BR-3: best-effort), reusing existing scan_id if available
+    // Persist findings (BR-3: best-effort) but defer "completed" until after posting
     if let Some(sid) = result.scan_id {
         if let Ok(store) = Store::open(&config.storage.db_path) {
             if let Err(e) = store.update_scan_findings(sid, &result.review.findings) {
                 warn!(err = %e, "failed to update findings for finalization");
-            }
-            if let Err(e) = store.update_scan_stage(sid, "completed") {
-                warn!(err = %e, "failed to mark scan as completed");
             }
         }
     } else {
@@ -683,6 +701,7 @@ pub async fn finalize_and_post(
         );
     }
 
+    // Post to GitHub
     if result.review.findings.is_empty() {
         github
             .post_comment(repo, pr, &result.review.summary)
@@ -707,6 +726,15 @@ pub async fn finalize_and_post(
             total = result.review.findings.len(),
             "review posted for {repo}#{pr}"
         );
+    }
+
+    // Mark completed only after posting succeeds
+    if let Some(sid) = result.scan_id {
+        if let Ok(store) = Store::open(&config.storage.db_path) {
+            if let Err(e) = store.update_scan_stage(sid, "completed") {
+                warn!(err = %e, "failed to mark scan as completed");
+            }
+        }
     }
 
     Ok(())
