@@ -93,6 +93,12 @@ pub enum Command {
         /// Dismissal ID (from dismissed output)
         dismissal_id: i64,
     },
+    /// Check that all dependencies and configuration are valid
+    Doctor {
+        /// Output format
+        #[arg(long, default_value = "text")]
+        format: OutputFormat,
+    },
     /// Review a GitHub PR (one-shot mode)
     Review {
         /// Repository (owner/repo)
@@ -316,6 +322,28 @@ mod tests {
                 assert_eq!(dismissal_id, 5);
             }
             _ => panic!("expected Undismiss command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_doctor_defaults() {
+        let cli = Cli::try_parse_from(["cartomancer", "doctor"]).unwrap();
+        match cli.command {
+            Command::Doctor { format } => {
+                assert!(matches!(format, OutputFormat::Text));
+            }
+            _ => panic!("expected Doctor command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_doctor_json() {
+        let cli = Cli::try_parse_from(["cartomancer", "doctor", "--format", "json"]).unwrap();
+        match cli.command {
+            Command::Doctor { format } => {
+                assert!(matches!(format, OutputFormat::Json));
+            }
+            _ => panic!("expected Doctor command"),
         }
     }
 

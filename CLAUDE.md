@@ -60,6 +60,7 @@ cartomancer dismiss <scan-id> <finding-index> [--reason <text>]
 cartomancer dismissed [--format text|json]
 cartomancer undismiss <dismissal-id>
 cartomancer serve [--port <n>]                    # webhook server for GitHub events
+cartomancer doctor [--format text|json]           # check dependencies and config health
 ```
 
 ## Review Pipeline Stages
