@@ -14,6 +14,15 @@
 - *(store)* v3 schema migration: `suggested_fix` and `agent_prompt` columns in findings table
 - *(pipeline)* `PipelineResult` includes `scan_duration` and `rule_count` for summary regeneration
 - *(server)* Extract `prepare_review_payload` for off-diff splitting and summary regeneration
+- *(llm)* Validate `max_tokens` (1..=128,000) at provider creation for Anthropic backend
+- *(llm)* Make Anthropic base URL configurable via `with_base_url()` for testing
+
+### 🧪 Tests
+
+- *(llm)* Add HTTP mocking tests (wiremock) for Anthropic provider: health_check, complete, payload verification
+- *(llm)* Add HTTP mocking tests (wiremock) for Ollama provider: health_check, complete, model detection
+- *(store)* Add full round-trip integration test for findings with all fields populated
+- *(store)* Add round-trip test for findings with no optional fields
 
 ## [0.4.0] - 2026-04-10
 

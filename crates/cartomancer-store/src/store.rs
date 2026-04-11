@@ -834,6 +834,131 @@ mod tests {
     }
 
     #[test]
+    fn store_full_finding_round_trip() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let finding = Finding {
+            rule_id: "rust.lang.security.hardcoded-password".into(),
+            message: "Hardcoded password detected".into(),
+            severity: Severity::Critical,
+            file_path: "src/auth.rs".into(),
+            start_line: 10,
+            end_line: 15,
+            snippet: "let password = \"secret\";".into(),
+            cwe: Some("CWE-798".into()),
+            graph_context: Some(GraphContext {
+                symbol_name: Some("check_password".into()),
+                callers: vec!["login".into(), "authenticate".into(), "verify_user".into()],
+                blast_radius: 42,
+                is_public_api: true,
+                domain_tags: vec!["auth".into(), "security".into()],
+            }),
+            llm_analysis: Some("This is a critical security issue. Hardcoded passwords can be extracted from compiled binaries.".into()),
+            escalation_reasons: vec![
+                "high blast radius (42 symbols)".into(),
+                "auth domain".into(),
+            ],
+            is_new: Some(true),
+            enclosing_context: Some("fn check_password(input: &str) -> bool {\n    let password = \"secret\";\n    input == password\n}".into()),
+            suggested_fix: Some("--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -10,3 +10,3 @@\n-    let password = \"secret\";\n+    let password = std::env::var(\"APP_SECRET\").expect(\"APP_SECRET not set\");\n".into()),
+            agent_prompt: Some("In `@src/auth.rs` around lines 10-15, Hardcoded password detected. Rule: rust.lang.security.hardcoded-password. Severity: critical. CWE: CWE-798. Apply this fix:\n\n```diff\n-    let password = \"secret\";\n+    let password = std::env::var(\"APP_SECRET\").expect(\"APP_SECRET not set\");\n```".into()),
+        };
+
+        store
+            .insert_findings(scan_id, std::slice::from_ref(&finding))
+            .unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        let s = &stored[0];
+
+        // Core fields
+        assert_eq!(s.rule_id, finding.rule_id);
+        assert_eq!(s.severity, "critical");
+        assert_eq!(s.file_path, finding.file_path);
+        assert_eq!(s.start_line, finding.start_line);
+        assert_eq!(s.end_line, finding.end_line);
+        assert_eq!(s.message, finding.message);
+        assert_eq!(s.snippet, finding.snippet);
+        assert_eq!(s.cwe, finding.cwe);
+
+        // Graph context (stored as JSON, verify round-trip)
+        let graph_json = s
+            .graph_context_json
+            .as_ref()
+            .expect("graph_context_json should be set");
+        let graph: GraphContext = serde_json::from_str(graph_json).unwrap();
+        assert_eq!(graph.symbol_name.as_deref(), Some("check_password"));
+        assert_eq!(graph.callers.len(), 3);
+        assert_eq!(graph.blast_radius, 42);
+        assert!(graph.is_public_api);
+        assert_eq!(graph.domain_tags, vec!["auth", "security"]);
+
+        // LLM analysis
+        assert_eq!(s.llm_analysis.as_deref(), finding.llm_analysis.as_deref());
+
+        // Escalation reasons (stored as JSON array)
+        let esc_json = s
+            .escalation_reasons_json
+            .as_ref()
+            .expect("escalation_reasons_json should be set");
+        let reasons: Vec<String> = serde_json::from_str(esc_json).unwrap();
+        assert_eq!(reasons.len(), 2);
+        assert!(reasons[0].contains("blast radius"));
+
+        // Enclosing context
+        assert_eq!(
+            s.enclosing_context.as_deref(),
+            finding.enclosing_context.as_deref()
+        );
+
+        // Suggested fix
+        assert_eq!(s.suggested_fix.as_deref(), finding.suggested_fix.as_deref());
+
+        // Agent prompt
+        assert_eq!(s.agent_prompt.as_deref(), finding.agent_prompt.as_deref());
+    }
+
+    #[test]
+    fn store_finding_with_no_optional_fields_round_trip() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let finding = Finding {
+            rule_id: "style.naming".into(),
+            message: "Use snake_case".into(),
+            severity: Severity::Info,
+            file_path: "src/lib.rs".into(),
+            start_line: 1,
+            end_line: 1,
+            snippet: "let myVar = 1;".into(),
+            cwe: None,
+            graph_context: None,
+            llm_analysis: None,
+            escalation_reasons: vec![],
+            is_new: None,
+            enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
+        };
+
+        store.insert_findings(scan_id, &[finding]).unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        let s = &stored[0];
+        assert_eq!(s.severity, "info");
+        assert!(s.cwe.is_none());
+        assert!(s.graph_context_json.is_none());
+        assert!(s.llm_analysis.is_none());
+        assert!(s.escalation_reasons_json.is_none());
+        assert!(s.enclosing_context.is_none());
+        assert!(s.suggested_fix.is_none());
+        assert!(s.agent_prompt.is_none());
+    }
+
+    #[test]
     fn store_open_file_creates_db() {
         let dir = tempfile::tempdir().unwrap();
         let db_path = dir.path().join("test.db");
