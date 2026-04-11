@@ -22,8 +22,8 @@ use cartomancer_core::diff::PullRequestDiff;
 use cartomancer_core::finding::Finding;
 use cartomancer_core::review::{ReviewResult, ReviewStatus};
 use cartomancer_github::client::GitHubClient;
-use cartomancer_github::diff::parse_diff;
-use cartomancer_github::types::PrMetadata;
+use cartomancer_github::diff::{is_line_in_diff, parse_diff};
+use cartomancer_github::types::{PrMetadata, ReviewComment};
 use cartomancer_graph::enricher::CartogEnricher;
 use cartomancer_graph::escalator::SeverityEscalator;
 
@@ -47,6 +47,9 @@ pub struct PipelineResult {
     pub scan_duration: std::time::Duration,
     /// Number of opengrep rules used — used for summary regeneration after off-diff splitting.
     pub rule_count: usize,
+    /// Scan ID from the store (if stage tracking is active). Used by `finalize_and_post`
+    /// to update the existing scan record instead of inserting a duplicate.
+    pub scan_id: Option<i64>,
     /// Temp dir handle — kept alive until review is posted, then dropped for cleanup.
     /// None if --work-dir was used.
     #[allow(dead_code)]
@@ -54,6 +57,9 @@ pub struct PipelineResult {
 }
 
 /// Run the full review pipeline for a single PR.
+///
+/// When `resume_scan_id` is Some, resumes a previously failed scan from its
+/// last completed stage (requires the work directory to still exist or a new clone).
 pub async fn run_pipeline(
     config: &AppConfig,
     github: &GitHubClient,
@@ -61,8 +67,51 @@ pub async fn run_pipeline(
     repo: &str,
     pr_number: u64,
     work_dir: Option<&str>,
+    resume_scan_id: Option<i64>,
 ) -> Result<PipelineResult> {
+    use cartomancer_core::review::PipelineStage;
+
     let pipeline_start = Instant::now();
+
+    // Determine which stage to start from (resume support)
+    let (start_stage, mut findings, scan_id) = match resume_scan_id {
+        Some(sid) => {
+            let store = Store::open(&config.storage.db_path)
+                .map_err(|e| anyhow::anyhow!("failed to open store for resume: {e}"))?;
+            let scan = store
+                .get_scan(sid)?
+                .ok_or_else(|| anyhow::anyhow!("scan {sid} not found — cannot resume"))?;
+
+            let stage = PipelineStage::from_db(&scan.stage)
+                .ok_or_else(|| anyhow::anyhow!("unknown stage '{}' for scan {sid}", scan.stage))?;
+
+            if stage == PipelineStage::Completed {
+                anyhow::bail!("scan {sid} already completed — nothing to resume");
+            }
+
+            // Verify the stored scan matches the current request
+            if scan.repo != repo {
+                anyhow::bail!(
+                    "scan {sid} belongs to repo '{}', not '{repo}' — cannot resume",
+                    scan.repo
+                );
+            }
+            if scan.pr_number != Some(pr_number) {
+                anyhow::bail!(
+                    "scan {sid} belongs to PR #{}, not #{pr_number} — cannot resume",
+                    scan.pr_number.map_or("none".into(), |n| n.to_string())
+                );
+            }
+
+            // Load persisted findings to resume from
+            let stored = store.get_findings(sid)?;
+            let resumed_findings = stored_to_findings(&stored);
+
+            info!(scan_id = sid, stage = %stage, findings = resumed_findings.len(), "resuming pipeline");
+            (stage, resumed_findings, Some(sid))
+        }
+        None => (PipelineStage::Pending, vec![], None),
+    };
 
     // 0. LLM health check — warn early if provider is unreachable
     match llm::create_provider(&config.llm) {
@@ -96,22 +145,101 @@ pub async fn run_pipeline(
         "diff parsed"
     );
 
-    // 4. Run opengrep with --baseline-commit
-    let opengrep_start = Instant::now();
-    let mut findings =
-        opengrep::run_opengrep(&work_str, &config.opengrep, Some(&pr_meta.base_sha)).await?;
-    let opengrep_elapsed = opengrep_start.elapsed();
+    // Open store for stage persistence (best-effort — stage tracking is optional)
+    let store = Store::open(&config.storage.db_path).ok();
     let rule_count = config.opengrep.rules.len();
-    info!(
-        findings = findings.len(),
-        elapsed_ms = opengrep_elapsed.as_millis() as u64,
-        "opengrep scan complete"
-    );
+
+    // Create or reuse scan record
+    let scan_id: Option<i64> = match scan_id {
+        Some(id) => Some(id),
+        None => {
+            if let Some(ref s) = store {
+                let record = ScanRecord {
+                    id: None,
+                    repo: repo.to_string(),
+                    branch: pr_meta.head_ref.clone(),
+                    commit_sha: pr_meta.head_sha.clone(),
+                    command: "review".into(),
+                    pr_number: Some(pr_number),
+                    finding_count: 0,
+                    summary: String::new(),
+                    created_at: None,
+                    stage: "pending".into(),
+                    error_message: None,
+                    failed_at_stage: None,
+                };
+                match s.insert_scan(&record) {
+                    Ok(id) => Some(id),
+                    Err(e) => {
+                        warn!(err = %e, "failed to create scan record — stage tracking disabled");
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    // Helper to persist stage (best-effort)
+    let advance_stage =
+        |store: &Option<Store>, scan_id: Option<i64>, stage: &str, findings: &[Finding]| {
+            let id = match scan_id {
+                Some(id) => id,
+                None => return,
+            };
+            if let Some(ref s) = store {
+                if let Err(e) = s.update_scan_findings(id, findings) {
+                    warn!(err = %e, stage, "failed to persist findings at stage");
+                }
+                if let Err(e) = s.update_scan_stage(id, stage) {
+                    warn!(err = %e, stage, "failed to update scan stage");
+                }
+            }
+        };
+
+    // Helper to record failure metadata (best-effort)
+    let record_failure =
+        |store: &Option<Store>, scan_id: Option<i64>, stage: &str, err: &anyhow::Error| {
+            if let (Some(id), Some(ref s)) = (scan_id, store) {
+                if let Err(e) = s.mark_scan_failed(id, stage, &err.to_string()) {
+                    warn!(err = %e, "failed to record scan failure");
+                }
+            }
+        };
+
+    // --- Stage: Scan ---
+    if start_stage < PipelineStage::Scanned {
+        let opengrep_start = Instant::now();
+        findings = match opengrep::run_opengrep(
+            &work_str,
+            &config.opengrep,
+            Some(&pr_meta.base_sha),
+        )
+        .await
+        {
+            Ok(f) => f,
+            Err(e) => {
+                record_failure(&store, scan_id, "scanned", &e);
+                return Err(e);
+            }
+        };
+        let opengrep_elapsed = opengrep_start.elapsed();
+        info!(
+            findings = findings.len(),
+            elapsed_ms = opengrep_elapsed.as_millis() as u64,
+            "opengrep scan complete"
+        );
+        advance_stage(&store, scan_id, "scanned", &findings);
+    } else {
+        info!(stage = "scanned", "skipping (already completed)");
+    }
 
     if findings.is_empty() {
         let branch = pr_meta.head_ref.clone();
         let base_branch = pr_meta.base_ref.clone();
         let scan_duration = pipeline_start.elapsed();
+        advance_stage(&store, scan_id, "completed", &findings);
         let review = ReviewResult {
             pr_number,
             repo_full_name: repo.to_string(),
@@ -127,28 +255,47 @@ pub async fn run_pipeline(
             base_branch,
             scan_duration,
             rule_count,
+            scan_id,
             temp_dir,
         });
     }
 
-    // 5. Enrich with cartog
-    enrich_findings(&work_path, config, &mut findings);
+    // --- Stage: Enrich ---
+    if start_stage < PipelineStage::Enriched {
+        enrich_findings(&work_path, config, &mut findings);
+        advance_stage(&store, scan_id, "enriched", &findings);
+    } else {
+        info!(stage = "enriched", "skipping (already completed)");
+    }
 
-    // 6. Escalate severity
-    let escalator = SeverityEscalator::new(config.severity.blast_radius_threshold);
-    escalator.escalate_batch(&mut findings);
+    // --- Stage: Escalate ---
+    if start_stage < PipelineStage::Escalated {
+        let escalator = SeverityEscalator::new(config.severity.blast_radius_threshold);
+        escalator.escalate_batch(&mut findings);
+        advance_stage(&store, scan_id, "escalated", &findings);
+    } else {
+        info!(stage = "escalated", "skipping (already completed)");
+    }
 
-    // 7. LLM deepen
-    deepen_findings(config, &mut findings).await;
+    // --- Stage: Deepen ---
+    if start_stage < PipelineStage::Deepened {
+        deepen_findings(config, &mut findings).await;
+        advance_stage(&store, scan_id, "deepened", &findings);
+    } else {
+        info!(stage = "deepened", "skipping (already completed)");
+    }
 
-    // 8. Sort by severity (critical first)
+    // Sort by severity (critical first)
     findings.sort_by(|a, b| b.severity.cmp(&a.severity));
 
-    // 9. Build ReviewResult
+    // Build ReviewResult and mark completed
     let scan_duration = pipeline_start.elapsed();
     let summary = comment::format_summary(&findings, &[], scan_duration, rule_count);
     let branch = pr_meta.head_ref;
     let base_branch = pr_meta.base_ref;
+
+    advance_stage(&store, scan_id, "completed", &findings);
+
     let review = ReviewResult {
         pr_number,
         repo_full_name: repo.to_string(),
@@ -165,8 +312,51 @@ pub async fn run_pipeline(
         base_branch,
         scan_duration,
         rule_count,
+        scan_id,
         temp_dir,
     })
+}
+
+/// Convert stored findings back to domain `Finding` structs for pipeline resumption.
+fn stored_to_findings(stored: &[cartomancer_store::types::StoredFinding]) -> Vec<Finding> {
+    use cartomancer_core::finding::GraphContext;
+    use cartomancer_core::severity::Severity;
+
+    stored
+        .iter()
+        .map(|sf| {
+            let severity = sf.severity.parse::<Severity>().unwrap_or(Severity::Warning);
+
+            let graph_context = sf
+                .graph_context_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str::<GraphContext>(json).ok());
+
+            let escalation_reasons: Vec<String> = sf
+                .escalation_reasons_json
+                .as_deref()
+                .and_then(|json| serde_json::from_str(json).ok())
+                .unwrap_or_default();
+
+            Finding {
+                rule_id: sf.rule_id.clone(),
+                message: sf.message.clone(),
+                severity,
+                file_path: sf.file_path.clone(),
+                start_line: sf.start_line,
+                end_line: sf.end_line,
+                snippet: sf.snippet.clone(),
+                cwe: sf.cwe.clone(),
+                graph_context,
+                llm_analysis: sf.llm_analysis.clone(),
+                escalation_reasons,
+                is_new: None,
+                enclosing_context: sf.enclosing_context.clone(),
+                suggested_fix: sf.suggested_fix.clone(),
+                agent_prompt: sf.agent_prompt.clone(),
+            }
+        })
+        .collect()
 }
 
 /// Prepare the working directory: clone to temp dir or reuse existing.
@@ -434,6 +624,136 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
     info!(deepened, failed, "LLM deepening complete");
 }
 
+/// Findings partitioned by diff placement, with comments ready for posting.
+pub struct ReviewPayload {
+    pub summary: String,
+    pub inline_comments: Vec<ReviewComment>,
+    pub off_diff_bodies: Vec<String>,
+}
+
+/// Partition findings into inline review comments and off-diff comments,
+/// regenerating the summary when off-diff findings exist.
+pub fn prepare_review_payload(result: &PipelineResult) -> ReviewPayload {
+    let review = &result.review;
+    let mut inline_comments = Vec::new();
+    let mut off_diff_findings: Vec<&Finding> = Vec::new();
+
+    for finding in &review.findings {
+        if is_line_in_diff(&result.diff, &finding.file_path, finding.start_line) {
+            inline_comments.push(ReviewComment {
+                path: finding.file_path.clone(),
+                line: finding.start_line,
+                body: comment::format_inline_comment(finding),
+            });
+        } else {
+            off_diff_findings.push(finding);
+        }
+    }
+
+    let summary = if off_diff_findings.is_empty() {
+        review.summary.clone()
+    } else {
+        comment::format_summary(
+            &review.findings,
+            &off_diff_findings,
+            result.scan_duration,
+            result.rule_count,
+        )
+    };
+
+    let off_diff_bodies = off_diff_findings
+        .iter()
+        .map(|f| comment::format_off_diff_comment(f))
+        .collect();
+
+    ReviewPayload {
+        summary,
+        inline_comments,
+        off_diff_bodies,
+    }
+}
+
+/// Post-pipeline finalization: annotate regression, filter dismissed, persist, post to GitHub.
+///
+/// Shared between `cmd_review()` (CLI) and webhook handler.
+pub async fn finalize_and_post(
+    config: &AppConfig,
+    github: &GitHubClient,
+    repo: &str,
+    pr: u64,
+    result: &mut PipelineResult,
+) -> Result<()> {
+    // Annotate findings as new/existing (US-5) and filter dismissed (US-6)
+    annotate_regression(
+        &config.storage.db_path,
+        repo,
+        &result.base_branch,
+        &mut result.review.findings,
+    );
+    filter_dismissed(&config.storage.db_path, &mut result.review.findings);
+
+    // Recompute summary to reflect filtered findings
+    let payload = prepare_review_payload(result);
+    result.review.summary = payload.summary.clone();
+
+    // Persist findings (BR-3: best-effort) but defer "completed" until after posting
+    if let Some(sid) = result.scan_id {
+        if let Ok(store) = Store::open(&config.storage.db_path) {
+            if let Err(e) = store.update_scan_findings(sid, &result.review.findings) {
+                warn!(err = %e, "failed to update findings for finalization");
+            }
+        }
+    } else {
+        persist_scan(
+            &config.storage.db_path,
+            repo,
+            &result.branch,
+            &result.review.head_sha,
+            "review",
+            Some(pr),
+            &result.review,
+        );
+    }
+
+    // Post to GitHub
+    if result.review.findings.is_empty() {
+        github
+            .post_comment(repo, pr, &result.review.summary)
+            .await?;
+        info!("clean summary posted for {repo}#{pr}");
+    } else {
+        github
+            .post_review(
+                repo,
+                pr,
+                &result.review.head_sha,
+                &payload.summary,
+                payload.inline_comments,
+            )
+            .await?;
+
+        for body in &payload.off_diff_bodies {
+            github.post_comment(repo, pr, body).await?;
+        }
+
+        info!(
+            total = result.review.findings.len(),
+            "review posted for {repo}#{pr}"
+        );
+    }
+
+    // Mark completed only after posting succeeds
+    if let Some(sid) = result.scan_id {
+        if let Ok(store) = Store::open(&config.storage.db_path) {
+            if let Err(e) = store.update_scan_stage(sid, "completed") {
+                warn!(err = %e, "failed to mark scan as completed");
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Persist a scan/review result to the store (BR-3: best-effort, never blocks pipeline).
 pub fn persist_scan(
     db_path: &str,
@@ -462,6 +782,9 @@ pub fn persist_scan(
         finding_count: review.findings.len() as u32,
         summary: review.summary.clone(),
         created_at: None,
+        stage: "completed".into(),
+        error_message: None,
+        failed_at_stage: None,
     };
 
     let scan_id = match store.insert_scan(&record) {
@@ -949,6 +1272,233 @@ mod tests {
         }
     }
 
+    mod stored_to_findings_tests {
+        use super::*;
+        use cartomancer_store::types::StoredFinding;
+
+        fn sample_stored_finding() -> StoredFinding {
+            StoredFinding {
+                id: Some(1),
+                scan_id: 1,
+                fingerprint: "fp123".into(),
+                rule_id: "test-rule".into(),
+                severity: "error".into(),
+                file_path: "src/lib.rs".into(),
+                start_line: 10,
+                end_line: 12,
+                message: "test finding".into(),
+                snippet: "let x = 1;".into(),
+                cwe: Some("CWE-798".into()),
+                graph_context_json: None,
+                llm_analysis: Some("analysis text".into()),
+                escalation_reasons_json: None,
+                enclosing_context: Some("fn main() { ... }".into()),
+                suggested_fix: Some("-old\n+new".into()),
+                agent_prompt: Some("fix it".into()),
+            }
+        }
+
+        #[test]
+        fn converts_basic_fields() {
+            let stored = vec![sample_stored_finding()];
+            let findings = stored_to_findings(&stored);
+
+            assert_eq!(findings.len(), 1);
+            let f = &findings[0];
+            assert_eq!(f.rule_id, "test-rule");
+            assert_eq!(f.severity, cartomancer_core::severity::Severity::Error);
+            assert_eq!(f.file_path, "src/lib.rs");
+            assert_eq!(f.start_line, 10);
+            assert_eq!(f.end_line, 12);
+            assert_eq!(f.message, "test finding");
+            assert_eq!(f.snippet, "let x = 1;");
+            assert_eq!(f.cwe.as_deref(), Some("CWE-798"));
+            assert_eq!(f.llm_analysis.as_deref(), Some("analysis text"));
+            assert_eq!(f.enclosing_context.as_deref(), Some("fn main() { ... }"));
+            assert_eq!(f.suggested_fix.as_deref(), Some("-old\n+new"));
+            assert_eq!(f.agent_prompt.as_deref(), Some("fix it"));
+            assert!(f.graph_context.is_none());
+            assert!(f.escalation_reasons.is_empty());
+            assert!(f.is_new.is_none());
+        }
+
+        #[test]
+        fn invalid_severity_falls_back_to_warning() {
+            let mut sf = sample_stored_finding();
+            sf.severity = "unknown_level".into();
+            let findings = stored_to_findings(&[sf]);
+            assert_eq!(
+                findings[0].severity,
+                cartomancer_core::severity::Severity::Warning
+            );
+        }
+
+        #[test]
+        fn parses_graph_context_json() {
+            let mut sf = sample_stored_finding();
+            sf.graph_context_json = Some(
+                r#"{"symbol_name":"check","callers":["main"],"blast_radius":5,"is_public_api":true,"domain_tags":["auth"]}"#.into(),
+            );
+            let findings = stored_to_findings(&[sf]);
+            let ctx = findings[0].graph_context.as_ref().unwrap();
+            assert_eq!(ctx.blast_radius, 5);
+            assert_eq!(ctx.callers, vec!["main"]);
+            assert!(ctx.is_public_api);
+        }
+
+        #[test]
+        fn parses_escalation_reasons_json() {
+            let mut sf = sample_stored_finding();
+            sf.escalation_reasons_json = Some(r#"["high blast radius","auth domain"]"#.into());
+            let findings = stored_to_findings(&[sf]);
+            assert_eq!(
+                findings[0].escalation_reasons,
+                vec!["high blast radius", "auth domain"]
+            );
+        }
+
+        #[test]
+        fn invalid_json_fields_are_none() {
+            let mut sf = sample_stored_finding();
+            sf.graph_context_json = Some("not json".into());
+            sf.escalation_reasons_json = Some("{bad".into());
+            let findings = stored_to_findings(&[sf]);
+            assert!(findings[0].graph_context.is_none());
+            assert!(findings[0].escalation_reasons.is_empty());
+        }
+
+        #[test]
+        fn empty_input_returns_empty() {
+            let findings = stored_to_findings(&[]);
+            assert!(findings.is_empty());
+        }
+    }
+
+    mod prepare_review_payload_tests {
+        use super::*;
+        use cartomancer_core::diff::{DiffChunk, PullRequestDiff};
+
+        fn make_finding(file: &str, line: u32) -> Finding {
+            Finding {
+                rule_id: "test-rule".into(),
+                message: "test finding".into(),
+                severity: cartomancer_core::severity::Severity::Warning,
+                file_path: file.into(),
+                start_line: line,
+                end_line: line + 1,
+                snippet: "code".into(),
+                cwe: None,
+                graph_context: None,
+                llm_analysis: None,
+                escalation_reasons: vec![],
+                is_new: None,
+                enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
+            }
+        }
+
+        fn make_diff(file: &str, start: u32, lines: u32) -> PullRequestDiff {
+            PullRequestDiff {
+                chunks: vec![DiffChunk {
+                    file_path: file.into(),
+                    old_start: 1,
+                    new_start: start,
+                    old_lines: lines,
+                    new_lines: lines,
+                    content: String::new(),
+                }],
+                files_changed: vec![file.into()],
+            }
+        }
+
+        fn make_result(findings: Vec<Finding>, diff: PullRequestDiff) -> PipelineResult {
+            PipelineResult {
+                review: ReviewResult {
+                    pr_number: 1,
+                    repo_full_name: "o/r".into(),
+                    head_sha: "abc".into(),
+                    findings,
+                    summary: "original summary".into(),
+                    status: ReviewStatus::Completed,
+                },
+                diff,
+                branch: "feat".into(),
+                base_branch: "main".into(),
+                scan_duration: std::time::Duration::from_secs(1),
+                rule_count: 5,
+                scan_id: None,
+                temp_dir: None,
+            }
+        }
+
+        #[test]
+        fn empty_findings_returns_original_summary() {
+            let result = make_result(vec![], make_diff("a.rs", 1, 10));
+            let payload = prepare_review_payload(&result);
+            assert!(payload.inline_comments.is_empty());
+            assert!(payload.off_diff_bodies.is_empty());
+            assert_eq!(payload.summary, "original summary");
+        }
+
+        #[test]
+        fn inline_finding_becomes_review_comment() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            let findings = vec![make_finding("src/lib.rs", 12)];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 1);
+            assert_eq!(payload.inline_comments[0].path, "src/lib.rs");
+            assert_eq!(payload.inline_comments[0].line, 12);
+            assert!(payload.off_diff_bodies.is_empty());
+        }
+
+        #[test]
+        fn off_diff_finding_becomes_comment_body() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            // Finding at line 50, outside diff range 10..15
+            let findings = vec![make_finding("src/lib.rs", 50)];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert!(payload.inline_comments.is_empty());
+            assert_eq!(payload.off_diff_bodies.len(), 1);
+            // Summary is regenerated when off-diff findings exist
+            assert_ne!(payload.summary, "original summary");
+        }
+
+        #[test]
+        fn mixed_inline_and_off_diff() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            let findings = vec![
+                make_finding("src/lib.rs", 12), // inline (in diff 10..15)
+                make_finding("src/lib.rs", 50), // off-diff
+                make_finding("other.rs", 1),    // off-diff (different file)
+            ];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 1);
+            assert_eq!(payload.off_diff_bodies.len(), 2);
+        }
+
+        #[test]
+        fn all_inline_keeps_original_summary() {
+            let diff = make_diff("src/lib.rs", 1, 100);
+            let findings = vec![
+                make_finding("src/lib.rs", 10),
+                make_finding("src/lib.rs", 20),
+            ];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 2);
+            assert!(payload.off_diff_bodies.is_empty());
+            assert_eq!(payload.summary, "original summary");
+        }
+    }
+
     #[test]
     fn pipeline_result_has_correct_fields() {
         let review = ReviewResult {
@@ -969,6 +1519,7 @@ mod tests {
             base_branch: "main".into(),
             scan_duration: std::time::Duration::from_secs(1),
             rule_count: 10,
+            scan_id: None,
             temp_dir: None,
         };
         assert_eq!(result.review.pr_number, 42);

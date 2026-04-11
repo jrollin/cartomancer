@@ -10,7 +10,7 @@ cartomancer findings [<scan-id>] [filters]     Browse/search findings
 cartomancer dismiss <scan-id> <index>          Dismiss a false positive
 cartomancer dismissed                          List dismissed findings
 cartomancer undismiss <dismissal-id>           Remove a dismissal
-cartomancer serve                              Webhook server (not yet implemented)
+cartomancer serve                              Webhook server for GitHub events
 ```
 
 ## Pipeline Stages
@@ -31,6 +31,7 @@ cartomancer serve                              Webhook server (not yet implement
 
 Stages 4-7 are shared between `scan` and `review` commands.
 Stages 8-9 are review-only. Stage 10 runs for both scan and review.
+Stages 4-7 persist findings to the store after each stage (schema v4) for resumability.
 
 ## Data Flow
 
@@ -219,7 +220,7 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 
 Scan and review results are persisted to a SQLite database (`.cartomancer.db` by default, configurable via `storage.db_path` in `.cartomancer.toml`).
 
-**Schema** (3 tables, v3): `scans` (scan metadata), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
+**Schema** (3 tables, v4): `scans` (scan metadata + pipeline `stage` + `error_message`), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
 
 **Fingerprint**: SHA-256 of `rule_id:file_path:snippet_content`. Stable across scans — used for regression detection and dismissal matching. Line numbers excluded because they shift with unrelated edits.
 
@@ -246,9 +247,36 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 - **Temp dir cleanup**: always cleaned up, even on failure (via TempDir Drop)
 - **Store errors**: logged and skipped — persistence never blocks the pipeline (BR-3)
 
+## Webhook Server (`serve`)
+
+The `serve` command runs an axum HTTP server that receives GitHub `pull_request` webhook events.
+
+```text
+POST /webhook → HMAC-SHA256 validation → parse PullRequestEvent → should_review() filter
+  → acquire semaphore permit → spawn background: run_pipeline + finalize_and_post
+  → return 202 Accepted
+
+GET /health → 200 OK
+```
+
+- **HMAC validation**: `X-Hub-Signature-256` header verified against `github.webhook_secret`
+- **Concurrency**: bounded by `serve.max_concurrent_reviews` (default 4) via tokio `Semaphore`
+- **Graceful shutdown**: listens for SIGTERM/SIGINT
+- **Background tasks**: each review runs independently with its own temp dir, GitHub client, and store connection
+
+## Pipeline Stage Tracking
+
+The pipeline persists progress to the `scans` table after each stage:
+
+```text
+pending → scanned → enriched → escalated → deepened → completed
+                                                    ↘ failed
+```
+
+Each stage writes findings to the store and advances the `stage` column. On failure, the scan is marked `failed` with an error message. The `--resume <scan-id>` flag on the `review` command allows restarting from the last completed stage.
+
 ## Future Extensions
 
-- Webhook server (`Command::Serve`) reusing `run_pipeline`
 - Multiple LLM providers (OpenAI, local models via LM Studio)
 - Custom rule YAML alongside opengrep
 - GitLab / Bitbucket support

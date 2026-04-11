@@ -14,6 +14,18 @@ pub struct ScanRecord {
     pub finding_count: u32,
     pub summary: String,
     pub created_at: Option<String>,
+    /// Pipeline stage (v4): tracks how far the scan progressed.
+    #[serde(default = "default_stage")]
+    pub stage: String,
+    /// Error message on failure (v4).
+    pub error_message: Option<String>,
+    /// The stage at which the pipeline failed (v4). `stage` retains the last
+    /// successful checkpoint so `--resume` can restart from there.
+    pub failed_at_stage: Option<String>,
+}
+
+fn default_stage() -> String {
+    "completed".into()
 }
 
 /// A persisted finding with its fingerprint (maps to the `findings` table).
@@ -66,4 +78,22 @@ pub struct FindingFilter {
     pub severity: Option<String>,
     pub file: Option<String>,
     pub branch: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_stage_is_completed() {
+        assert_eq!(default_stage(), "completed");
+    }
+
+    #[test]
+    fn scan_record_default_stage_via_serde() {
+        let json = r#"{"id":null,"repo":"r","branch":"b","commit_sha":"s","command":"scan","pr_number":null,"finding_count":0,"summary":"s","created_at":null,"error_message":null,"failed_at_stage":null}"#;
+        let record: ScanRecord = serde_json::from_str(json).unwrap();
+        assert_eq!(record.stage, "completed");
+        assert!(record.failed_at_stage.is_none());
+    }
 }

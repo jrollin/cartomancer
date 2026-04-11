@@ -17,6 +17,57 @@ pub enum ReviewStatus {
     Failed { reason: String },
 }
 
+/// Pipeline stage for store-backed resumability.
+///
+/// Tracks how far a scan has progressed through the pipeline.
+/// Stages are ordered: each stage implies all prior stages are complete.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStage {
+    Pending,
+    Scanned,
+    Enriched,
+    Escalated,
+    Deepened,
+    Completed,
+    Failed,
+}
+
+impl PipelineStage {
+    /// Parse from a database string value.
+    pub fn from_db(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "scanned" => Some(Self::Scanned),
+            "enriched" => Some(Self::Enriched),
+            "escalated" => Some(Self::Escalated),
+            "deepened" => Some(Self::Deepened),
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    /// Convert to a database string value.
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Scanned => "scanned",
+            Self::Enriched => "enriched",
+            Self::Escalated => "escalated",
+            Self::Deepened => "deepened",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for PipelineStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_db_str())
+    }
+}
+
 /// Final review result ready for posting to GitHub.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewResult {
@@ -103,6 +154,91 @@ mod tests {
             back.findings[0].agent_prompt.as_deref(),
             Some("In @src/lib.rs around lines 1-1, fix it.")
         );
+    }
+
+    mod pipeline_stage {
+        use crate::review::PipelineStage;
+
+        #[test]
+        fn from_db_valid_variants() {
+            assert_eq!(
+                PipelineStage::from_db("pending"),
+                Some(PipelineStage::Pending)
+            );
+            assert_eq!(
+                PipelineStage::from_db("scanned"),
+                Some(PipelineStage::Scanned)
+            );
+            assert_eq!(
+                PipelineStage::from_db("enriched"),
+                Some(PipelineStage::Enriched)
+            );
+            assert_eq!(
+                PipelineStage::from_db("escalated"),
+                Some(PipelineStage::Escalated)
+            );
+            assert_eq!(
+                PipelineStage::from_db("deepened"),
+                Some(PipelineStage::Deepened)
+            );
+            assert_eq!(
+                PipelineStage::from_db("completed"),
+                Some(PipelineStage::Completed)
+            );
+            assert_eq!(
+                PipelineStage::from_db("failed"),
+                Some(PipelineStage::Failed)
+            );
+        }
+
+        #[test]
+        fn from_db_invalid_returns_none() {
+            assert_eq!(PipelineStage::from_db("unknown"), None);
+            assert_eq!(PipelineStage::from_db(""), None);
+            assert_eq!(PipelineStage::from_db("PENDING"), None);
+        }
+
+        #[test]
+        fn as_db_str_round_trip() {
+            let stages = [
+                PipelineStage::Pending,
+                PipelineStage::Scanned,
+                PipelineStage::Enriched,
+                PipelineStage::Escalated,
+                PipelineStage::Deepened,
+                PipelineStage::Completed,
+                PipelineStage::Failed,
+            ];
+            for stage in &stages {
+                let s = stage.as_db_str();
+                assert_eq!(PipelineStage::from_db(s).as_ref(), Some(stage));
+            }
+        }
+
+        #[test]
+        fn display_matches_db_str() {
+            let stage = PipelineStage::Enriched;
+            assert_eq!(format!("{stage}"), "enriched");
+            assert_eq!(format!("{}", PipelineStage::Failed), "failed");
+        }
+
+        #[test]
+        fn ordering_is_correct() {
+            assert!(PipelineStage::Pending < PipelineStage::Scanned);
+            assert!(PipelineStage::Scanned < PipelineStage::Enriched);
+            assert!(PipelineStage::Enriched < PipelineStage::Escalated);
+            assert!(PipelineStage::Escalated < PipelineStage::Deepened);
+            assert!(PipelineStage::Deepened < PipelineStage::Completed);
+        }
+
+        #[test]
+        fn serde_round_trip() {
+            let stage = PipelineStage::Scanned;
+            let json = serde_json::to_string(&stage).unwrap();
+            assert_eq!(json, "\"scanned\"");
+            let back: PipelineStage = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, stage);
+        }
     }
 
     #[test]

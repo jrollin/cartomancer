@@ -27,6 +27,10 @@ pub fn load_config(path: &str) -> Result<AppConfig> {
         )
     })?;
 
+    config
+        .validate()
+        .map_err(|e| anyhow::anyhow!("config validation failed: {e}"))?;
+
     info!(
         path = %path.display(),
         provider = ?config.llm.provider,
@@ -36,6 +40,48 @@ pub fn load_config(path: &str) -> Result<AppConfig> {
     );
 
     Ok(config)
+}
+
+/// Returns true if the value is a non-empty, non-whitespace string.
+fn is_non_empty(s: &str) -> bool {
+    !s.trim().is_empty()
+}
+
+/// Validate serve-specific requirements (webhook secret and GitHub token).
+pub fn validate_for_serve(config: &AppConfig) -> Result<()> {
+    let has_secret = config
+        .github
+        .webhook_secret
+        .as_deref()
+        .map(is_non_empty)
+        .unwrap_or(false)
+        || std::env::var("CARTOMANCER_WEBHOOK_SECRET")
+            .map(|v| is_non_empty(&v))
+            .unwrap_or(false);
+    if !has_secret {
+        anyhow::bail!(
+            "serve requires a webhook secret: set github.webhook_secret in config \
+             or CARTOMANCER_WEBHOOK_SECRET env var"
+        );
+    }
+
+    let has_token = config
+        .github
+        .token
+        .as_deref()
+        .map(is_non_empty)
+        .unwrap_or(false)
+        || std::env::var("GITHUB_TOKEN")
+            .map(|v| is_non_empty(&v))
+            .unwrap_or(false);
+    if !has_token {
+        anyhow::bail!(
+            "serve requires a GitHub token: set github.token in config \
+             or GITHUB_TOKEN env var"
+        );
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -80,5 +126,66 @@ mod tests {
             config.llm.provider,
             cartomancer_core::config::LlmBackend::Ollama
         ));
+    }
+
+    #[test]
+    fn invalid_config_values_rejected() {
+        let mut tmp = tempfile::NamedTempFile::new().unwrap();
+        write!(tmp, "[opengrep]\nrules = []\ntimeout_seconds = 0\n").unwrap();
+        let result = load_config(tmp.path().to_str().unwrap());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("config validation failed"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_for_serve_missing_secret() {
+        std::env::remove_var("CARTOMANCER_WEBHOOK_SECRET");
+        std::env::remove_var("GITHUB_TOKEN");
+        let config = AppConfig::default();
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("webhook secret"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_for_serve_missing_token() {
+        std::env::remove_var("GITHUB_TOKEN");
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("test-secret".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("GitHub token"), "got: {err}");
+    }
+
+    #[test]
+    fn validate_for_serve_all_present() {
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("test-secret".into());
+        config.github.token = Some("ghp_test".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_for_serve_empty_secret_rejected() {
+        std::env::remove_var("CARTOMANCER_WEBHOOK_SECRET");
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("".into());
+        config.github.token = Some("ghp_test".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn validate_for_serve_whitespace_token_rejected() {
+        std::env::remove_var("GITHUB_TOKEN");
+        let mut config = AppConfig::default();
+        config.github.webhook_secret = Some("secret".into());
+        config.github.token = Some("   ".into());
+        let result = validate_for_serve(&config);
+        assert!(result.is_err());
     }
 }

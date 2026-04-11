@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding new migrations.
-pub const CURRENT_VERSION: i32 = 3;
+pub const CURRENT_VERSION: i32 = 4;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
 ///
@@ -31,6 +31,9 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if version < 3 {
         migrate_v3(conn)?;
+    }
+    if version < 4 {
+        migrate_v4(conn)?;
     }
 
     Ok(())
@@ -122,6 +125,29 @@ fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migrate_v4(conn: &Connection) -> rusqlite::Result<()> {
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(scans)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !columns.contains(&"stage".to_string()) {
+        conn.execute_batch(
+            "ALTER TABLE scans ADD COLUMN stage TEXT NOT NULL DEFAULT 'completed';",
+        )?;
+    }
+    if !columns.contains(&"error_message".to_string()) {
+        conn.execute_batch("ALTER TABLE scans ADD COLUMN error_message TEXT;")?;
+    }
+    if !columns.contains(&"failed_at_stage".to_string()) {
+        conn.execute_batch("ALTER TABLE scans ADD COLUMN failed_at_stage TEXT;")?;
+    }
+
+    conn.pragma_update(None, "user_version", 4)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,6 +213,68 @@ mod tests {
         assert!(indexes.contains(&"idx_findings_scan_id".to_string()));
         assert!(indexes.contains(&"idx_findings_fingerprint".to_string()));
         assert!(indexes.contains(&"idx_dismissals_fingerprint".to_string()));
+    }
+
+    #[test]
+    fn schema_scans_table_has_stage_and_error_columns() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        let columns: Vec<String> = conn
+            .prepare("PRAGMA table_info(scans)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert!(
+            columns.contains(&"stage".to_string()),
+            "missing stage column"
+        );
+        assert!(
+            columns.contains(&"error_message".to_string()),
+            "missing error_message column"
+        );
+        assert!(
+            columns.contains(&"failed_at_stage".to_string()),
+            "missing failed_at_stage column"
+        );
+    }
+
+    #[test]
+    fn schema_migrate_v4_is_resumable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate partial v4: manually add one column, reset version to 3
+        conn.pragma_update(None, "user_version", 3).unwrap();
+
+        // Re-running migrate should not fail even though columns may already exist
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
+    }
+
+    #[test]
+    fn schema_stage_default_is_completed() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Insert a scan without specifying stage
+        conn.execute(
+            "INSERT INTO scans (repo, branch, commit_sha, command, finding_count, summary) VALUES ('r', 'b', 'sha', 'scan', 0, 's')",
+            [],
+        )
+        .unwrap();
+
+        let stage: String = conn
+            .query_row("SELECT stage FROM scans WHERE id = 1", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(stage, "completed");
     }
 
     #[test]
