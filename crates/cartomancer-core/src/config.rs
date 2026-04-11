@@ -261,8 +261,8 @@ impl AppConfig {
             errors.push("severity.impact_depth must be between 1 and 20");
         }
 
-        if self.llm.max_tokens == 0 {
-            errors.push("llm.max_tokens must be > 0");
+        if self.llm.max_tokens == 0 || self.llm.max_tokens > 128_000 {
+            errors.push("llm.max_tokens must be between 1 and 128000");
         }
         if self.llm.max_concurrent_deepening == 0 {
             errors.push("llm.max_concurrent_deepening must be > 0");
@@ -482,7 +482,21 @@ db_path = "/tmp/custom.db"
             let mut config = AppConfig::default();
             config.llm.max_tokens = 0;
             let err = config.validate().unwrap_err();
-            assert!(err.contains("max_tokens must be > 0"), "got: {err}");
+            assert!(
+                err.contains("max_tokens must be between 1 and 128000"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn max_tokens_above_limit_rejected() {
+            let mut config = AppConfig::default();
+            config.llm.max_tokens = 128_001;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("max_tokens must be between 1 and 128000"),
+                "got: {err}"
+            );
         }
 
         #[test]
