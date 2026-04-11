@@ -1,6 +1,7 @@
 //! Doctor command — verify that all dependencies and configuration are healthy.
 
 use std::fmt;
+use std::time::Duration;
 
 use anyhow::Result;
 
@@ -160,11 +161,18 @@ fn check_github_token(config: &AppConfig) -> CheckResult {
 }
 
 async fn check_opengrep() -> CheckResult {
-    match tokio::process::Command::new("opengrep")
+    let fut = tokio::process::Command::new("opengrep")
         .arg("--version")
-        .output()
-        .await
-    {
+        .output();
+
+    let output = match tokio::time::timeout(Duration::from_secs(10), fut).await {
+        Ok(result) => result,
+        Err(_) => {
+            return CheckResult::fail("opengrep", "timed out waiting for opengrep --version");
+        }
+    };
+
+    match output {
         Ok(output) if output.status.success() => {
             let version = String::from_utf8_lossy(&output.stdout);
             let version = version.trim();
@@ -218,9 +226,29 @@ fn check_cartog() -> CheckResult {
                 format!("{label} (run `cartog index .` to build the code graph)"),
             )
         }
-        Ok(_) | Err(_) => CheckResult::warn(
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let detail = if !stderr.trim().is_empty() {
+                stderr.trim().to_string()
+            } else {
+                stdout.trim().to_string()
+            };
+            CheckResult::warn(
+                "cartog",
+                format!(
+                    "exited with code {} — {}",
+                    output.status.code().unwrap_or(-1),
+                    detail
+                ),
+            )
+        }
+        Err(e) => CheckResult::warn(
             "cartog",
-            "not found in PATH — graph enrichment will be skipped (install: cargo install cartog)",
+            format!(
+                "not found in PATH ({}) — graph enrichment will be skipped (install: cargo install cartog)",
+                e.kind()
+            ),
         ),
     }
 }
@@ -279,9 +307,18 @@ mod tests {
 
     #[test]
     fn check_github_token_missing() {
+        let saved = std::env::var_os("GITHUB_TOKEN");
         std::env::remove_var("GITHUB_TOKEN");
+
         let config = AppConfig::default();
         let result = check_github_token(&config);
+
+        // Restore before asserting so panics don't leave env dirty
+        match saved {
+            Some(val) => std::env::set_var("GITHUB_TOKEN", val),
+            None => std::env::remove_var("GITHUB_TOKEN"),
+        }
+
         assert!(matches!(result.status, CheckStatus::Warn));
         assert!(result.detail.contains("not set"));
     }
@@ -304,9 +341,13 @@ mod tests {
 
     #[test]
     fn check_storage_bad_path() {
+        let tmp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
-        config.storage.db_path = "/nonexistent/deeply/nested/impossible/path.db".into();
+        // Point db_path at the directory itself — SQLite cannot open a directory
+        config.storage.db_path = tmp.path().to_string_lossy().into_owned();
         let result = check_storage(&config);
+        // Keep tmp alive until after the assertion
+        drop(tmp);
         assert!(matches!(result.status, CheckStatus::Fail));
     }
 
