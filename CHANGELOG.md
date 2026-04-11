@@ -1,29 +1,38 @@
-## [Unreleased]
+## [0.5.0] - 2026-04-11
 
 ### 🚀 Features
 
-- *(llm)* LLM deepening now requests suggested fixes as ```diff blocks alongside impact analysis
-- *(llm)* Add response parser (`parse_llm_response`) to split analysis from fix using fence detection
-- *(llm)* Add agent prompt generation (`build_agent_prompt`) — self-contained instructions for AI tools
-- *(llm)* Truncate enclosing context to 2000 chars (UTF-8 safe) to bound token usage
-- *(comment)* Classify findings as Actionable (has fix OR severity >= Error) or Nitpick
-- *(comment)* Inline comments include category label, collapsible suggested fix, and collapsible agent prompt
-- *(comment)* Off-diff findings posted with `[!CAUTION]` banner and file:line location
-- *(comment)* PR summary includes actionable count header, category breakdown, and collapsible off-diff listing
-- *(comment)* Escape triple backticks in fenced code blocks to prevent markdown injection
-- *(store)* v3 schema migration: `suggested_fix` and `agent_prompt` columns in findings table
-- *(pipeline)* `PipelineResult` includes `scan_duration` and `rule_count` for summary regeneration
-- *(server)* Extract `prepare_review_payload` for off-diff splitting and summary regeneration
-- *(llm)* Validate `max_tokens` (1..=128,000) at provider creation for Anthropic backend
-- *(llm)* Make Anthropic base URL configurable via `with_base_url()` for testing
+- *(llm)* Add suggested fixes, agent prompts, and categorized review comments
+- *(serve)* Add webhook server, config validation, and pipeline decomposition
+- *(cli)* Add doctor command to check dependencies and config health
 
-### 🧪 Tests
+### 🐛 Bug Fixes
 
-- *(llm)* Add HTTP mocking tests (wiremock) for Anthropic provider: health_check, complete, payload verification
-- *(llm)* Add HTTP mocking tests (wiremock) for Ollama provider: health_check, complete, model detection
-- *(store)* Add full round-trip integration test for findings with all fields populated
-- *(store)* Add round-trip test for findings with no optional fields
+- *(llm)* Line-aware fence parsing, idempotent migration, and review parity
+- *(review)* Address all PR review findings
+- *(config)* Enforce Anthropic max_tokens upper bound (1..=128000)
+- *(pipeline)* Persist failure metadata, defer completed, filter empty tokens
+- *(pipeline)* Validate scan metadata before resuming
+- *(doctor)* Address PR review findings, fix README binary name
 
+### 📚 Documentation
+
+- *(doctor)* Add docstrings to meet 80% coverage threshold
+
+### 🧪 Testing
+
+- *(coverage)* Add mock provider deepen test and resumable migration test
+- *(llm)* Add wiremock HTTP tests, store round-trip, and max_tokens validation
+- *(coverage)* Add tests for PipelineStage, stored_to_findings, and store methods
+- *(coverage)* Add tests for prepare_review_payload, semaphore 503, schema v4
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deps)* Bump codecov/codecov-action from 5 to 6
+- *(deps)* Bump actions/download-artifact from 4 to 8
+- *(deps)* Bump actions/upload-artifact from 4 to 7
+- *(deps)* Bump actions/checkout from 5 to 6
+- Bump version to 0.5.0
 ## [0.4.0] - 2026-04-10
 
 ### 🚀 Features
