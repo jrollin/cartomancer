@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding new migrations.
-pub const CURRENT_VERSION: i32 = 2;
+pub const CURRENT_VERSION: i32 = 3;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
 ///
@@ -28,6 +28,9 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if version < 2 {
         migrate_v2(conn)?;
+    }
+    if version < 3 {
+        migrate_v3(conn)?;
     }
 
     Ok(())
@@ -95,6 +98,19 @@ fn migrate_v2(conn: &Connection) -> rusqlite::Result<()> {
         ALTER TABLE findings ADD COLUMN enclosing_context TEXT;
 
         PRAGMA user_version = 2;
+        ",
+    )?;
+
+    Ok(())
+}
+
+fn migrate_v3(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        "
+        ALTER TABLE findings ADD COLUMN suggested_fix TEXT;
+        ALTER TABLE findings ADD COLUMN agent_prompt TEXT;
+
+        PRAGMA user_version = 3;
         ",
     )?;
 
@@ -226,6 +242,8 @@ mod tests {
             "llm_analysis",
             "escalation_reasons_json",
             "enclosing_context",
+            "suggested_fix",
+            "agent_prompt",
         ];
         for col in expected {
             assert!(columns.contains(&col.to_string()), "missing column: {col}");

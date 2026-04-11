@@ -73,6 +73,55 @@ async fn main() -> Result<()> {
     }
 }
 
+/// Findings partitioned by diff placement, with comments ready for posting.
+struct ReviewPayload {
+    summary: String,
+    inline_comments: Vec<ReviewComment>,
+    off_diff_bodies: Vec<String>,
+}
+
+/// Partition findings into inline review comments and off-diff comments,
+/// regenerating the summary when off-diff findings exist.
+fn prepare_review_payload(result: &pipeline::PipelineResult) -> ReviewPayload {
+    let review = &result.review;
+    let mut inline_comments = Vec::new();
+    let mut off_diff_findings: Vec<&Finding> = Vec::new();
+
+    for finding in &review.findings {
+        if is_line_in_diff(&result.diff, &finding.file_path, finding.start_line) {
+            inline_comments.push(ReviewComment {
+                path: finding.file_path.clone(),
+                line: finding.start_line,
+                body: comment::format_inline_comment(finding),
+            });
+        } else {
+            off_diff_findings.push(finding);
+        }
+    }
+
+    let summary = if off_diff_findings.is_empty() {
+        review.summary.clone()
+    } else {
+        comment::format_summary(
+            &review.findings,
+            &off_diff_findings,
+            result.scan_duration,
+            result.rule_count,
+        )
+    };
+
+    let off_diff_bodies = off_diff_findings
+        .iter()
+        .map(|f| comment::format_off_diff_comment(f))
+        .collect();
+
+    ReviewPayload {
+        summary,
+        inline_comments,
+        off_diff_bodies,
+    }
+}
+
 async fn cmd_review(
     repo: &str,
     pr: u64,
@@ -142,36 +191,22 @@ async fn cmd_review(
         github.post_comment(repo, pr, &review.summary).await?;
         info!("clean summary posted for {repo}#{pr}");
     } else {
-        // Build inline comments for findings on diff lines
-        let mut inline_comments = Vec::new();
-        let mut off_diff_findings = Vec::new();
-
-        for finding in &review.findings {
-            if is_line_in_diff(&result.diff, &finding.file_path, finding.start_line) {
-                inline_comments.push(ReviewComment {
-                    path: finding.file_path.clone(),
-                    line: finding.start_line,
-                    body: comment::format_inline_comment(finding),
-                });
-            } else {
-                off_diff_findings.push(finding);
-            }
-        }
+        let payload = prepare_review_payload(&result);
 
         // Post review with inline comments
         github
-            .post_review(repo, pr, &review.head_sha, &review.summary, inline_comments)
+            .post_review(
+                repo,
+                pr,
+                &review.head_sha,
+                &payload.summary,
+                payload.inline_comments,
+            )
             .await?;
 
         // Post off-diff findings as regular comments
-        for finding in &off_diff_findings {
-            let body = format!(
-                "**Off-diff finding** in `{}:{}`\n\n{}",
-                finding.file_path,
-                finding.start_line,
-                comment::format_inline_comment(finding),
-            );
-            github.post_comment(repo, pr, &body).await?;
+        for body in &payload.off_diff_bodies {
+            github.post_comment(repo, pr, body).await?;
         }
 
         info!(

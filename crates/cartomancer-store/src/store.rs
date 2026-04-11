@@ -15,6 +15,29 @@ pub struct Store {
     conn: Connection,
 }
 
+/// Map a SQLite row to a `StoredFinding` (shared by all finding queries).
+fn row_to_stored_finding(row: &rusqlite::Row) -> rusqlite::Result<StoredFinding> {
+    Ok(StoredFinding {
+        id: Some(row.get(0)?),
+        scan_id: row.get(1)?,
+        fingerprint: row.get(2)?,
+        rule_id: row.get(3)?,
+        severity: row.get(4)?,
+        file_path: row.get(5)?,
+        start_line: row.get(6)?,
+        end_line: row.get(7)?,
+        message: row.get(8)?,
+        snippet: row.get(9)?,
+        cwe: row.get(10)?,
+        graph_context_json: row.get(11)?,
+        llm_analysis: row.get(12)?,
+        escalation_reasons_json: row.get(13)?,
+        enclosing_context: row.get(14)?,
+        suggested_fix: row.get(15)?,
+        agent_prompt: row.get(16)?,
+    })
+}
+
 impl Store {
     /// Open (or create) the SQLite database at `path` and run pending migrations.
     pub fn open(path: &str) -> rusqlite::Result<Self> {
@@ -61,8 +84,9 @@ impl Store {
             let mut stmt = tx.prepare(
                 "INSERT INTO findings (scan_id, fingerprint, rule_id, severity, file_path,
                  start_line, end_line, message, snippet, cwe, graph_context_json,
-                 llm_analysis, escalation_reasons_json, enclosing_context)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 llm_analysis, escalation_reasons_json, enclosing_context,
+                 suggested_fix, agent_prompt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             )?;
 
             for f in findings {
@@ -92,6 +116,8 @@ impl Store {
                     f.llm_analysis,
                     escalation_json,
                     f.enclosing_context,
+                    f.suggested_fix,
+                    f.agent_prompt,
                 ])?;
             }
         }
@@ -143,7 +169,7 @@ impl Store {
             "SELECT id, scan_id, fingerprint, rule_id, severity, file_path,
                     start_line, end_line, message, snippet, cwe,
                     graph_context_json, llm_analysis, escalation_reasons_json,
-                    enclosing_context
+                    enclosing_context, suggested_fix, agent_prompt
              FROM findings WHERE scan_id = ?1
              ORDER BY
                  CASE severity
@@ -155,25 +181,7 @@ impl Store {
                  file_path",
         )?;
 
-        let rows = stmt.query_map(params![scan_id], |row| {
-            Ok(StoredFinding {
-                id: Some(row.get(0)?),
-                scan_id: row.get(1)?,
-                fingerprint: row.get(2)?,
-                rule_id: row.get(3)?,
-                severity: row.get(4)?,
-                file_path: row.get(5)?,
-                start_line: row.get(6)?,
-                end_line: row.get(7)?,
-                message: row.get(8)?,
-                snippet: row.get(9)?,
-                cwe: row.get(10)?,
-                graph_context_json: row.get(11)?,
-                llm_analysis: row.get(12)?,
-                escalation_reasons_json: row.get(13)?,
-                enclosing_context: row.get(14)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![scan_id], row_to_stored_finding)?;
 
         rows.collect()
     }
@@ -184,7 +192,7 @@ impl Store {
             "SELECT f.id, f.scan_id, f.fingerprint, f.rule_id, f.severity, f.file_path,
                     f.start_line, f.end_line, f.message, f.snippet, f.cwe,
                     f.graph_context_json, f.llm_analysis, f.escalation_reasons_json,
-                    f.enclosing_context
+                    f.enclosing_context, f.suggested_fix, f.agent_prompt
              FROM findings f
              JOIN scans s ON f.scan_id = s.id
              WHERE 1=1",
@@ -228,25 +236,7 @@ impl Store {
         let params_ref: Vec<&dyn rusqlite::types::ToSql> =
             param_values.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn.prepare(&sql)?;
-        let rows = stmt.query_map(params_ref.as_slice(), |row| {
-            Ok(StoredFinding {
-                id: Some(row.get(0)?),
-                scan_id: row.get(1)?,
-                fingerprint: row.get(2)?,
-                rule_id: row.get(3)?,
-                severity: row.get(4)?,
-                file_path: row.get(5)?,
-                start_line: row.get(6)?,
-                end_line: row.get(7)?,
-                message: row.get(8)?,
-                snippet: row.get(9)?,
-                cwe: row.get(10)?,
-                graph_context_json: row.get(11)?,
-                llm_analysis: row.get(12)?,
-                escalation_reasons_json: row.get(13)?,
-                enclosing_context: row.get(14)?,
-            })
-        })?;
+        let rows = stmt.query_map(params_ref.as_slice(), row_to_stored_finding)?;
 
         rows.collect()
     }
@@ -415,6 +405,8 @@ mod tests {
             escalation_reasons: vec![],
             is_new: None,
             enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
         }
     }
 
@@ -797,6 +789,48 @@ mod tests {
         let results = store.search_findings(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert!(results[0].file_path.contains("auth"));
+    }
+
+    #[test]
+    fn store_suggested_fix_round_trip() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let mut finding = sample_finding();
+        finding.suggested_fix = Some("--- a/src/auth.rs\n+++ b/src/auth.rs\n@@ -10,1 +10,1 @@\n-let password = \"secret\";\n+let password = std::env::var(\"SECRET\").unwrap();".into());
+
+        store.insert_findings(scan_id, &[finding]).unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].suggested_fix.is_some());
+        assert!(stored[0]
+            .suggested_fix
+            .as_ref()
+            .unwrap()
+            .contains("std::env::var"));
+        assert_eq!(stored[0].agent_prompt, None);
+    }
+
+    #[test]
+    fn store_agent_prompt_round_trip() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let mut finding = sample_finding();
+        finding.agent_prompt =
+            Some("In @src/auth.rs around lines 10-12, fix the hardcoded password.".into());
+
+        store.insert_findings(scan_id, &[finding]).unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 1);
+        assert!(stored[0].agent_prompt.is_some());
+        assert!(stored[0]
+            .agent_prompt
+            .as_ref()
+            .unwrap()
+            .contains("fix the hardcoded password"));
     }
 
     #[test]

@@ -53,13 +53,13 @@ cartomancer/
 │       ├── src/
 │       │   ├── main.rs                # entry point: cmd_scan, cmd_review, cmd_history, cmd_findings, cmd_dismiss
 │       │   ├── cli.rs                 # clap: scan, review, history, findings, dismiss, dismissed, undismiss, serve
-│       │   ├── comment.rs             # format_inline_comment, format_summary
+│       │   ├── comment.rs             # format_inline_comment, format_off_diff_comment, format_summary, classify_finding
 │       │   ├── config.rs
 │       │   ├── pipeline.rs            # run_pipeline, persist_scan, annotate_regression, filter_dismissed
 │       │   ├── opengrep.rs
 │       │   ├── webhook.rs
 │       │   └── llm/
-│       │       ├── mod.rs              # LlmProvider trait
+│       │       ├── mod.rs              # LlmProvider trait, parse_llm_response, build_agent_prompt
 │       │       ├── ollama.rs           # local dev
 │       │       └── anthropic.rs        # production
 │       └── tests/
@@ -98,11 +98,11 @@ cartomancer-server
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
 | `cli` | Clap argument parsing (scan, review, history, findings, dismiss, dismissed, undismiss, serve) | - |
-| `comment` | Format inline comments + summary for GitHub | cartomancer-core::finding |
+| `comment` | Format categorized inline comments (Actionable/Nitpick, collapsible fix + agent prompt), off-diff caution comments, summary with actionable counts | cartomancer-core::finding |
 | `config` | TOML config loading | cartomancer-core::config |
 | `pipeline` | Review orchestration + persistence + regression + dismissal filtering | all other modules, cartomancer-store |
 | `opengrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
-| `llm/` | Provider trait + Ollama + Anthropic | cartomancer-core::finding |
+| `llm/` | Provider trait + Ollama + Anthropic + response parsing (analysis/fix split) + agent prompt generation | cartomancer-core::finding |
 | `webhook` | Axum HTTP handler | pipeline, cartomancer-github |
 
 ## Conventions

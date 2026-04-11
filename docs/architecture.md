@@ -22,11 +22,11 @@ cartomancer serve                              Webhook server (not yet implement
  4. Opengrep Scan  subprocess --baseline-commit → Vec<Finding>
  5. Graph Enrich  cartog impact/refs → GraphContext per finding
  6. Escalate      blast radius + domain → adjusted Severity
- 7. LLM Deepen    Ollama or Anthropic → analysis text (conditional)
+ 7. LLM Deepen    Ollama or Anthropic → analysis + suggested fix + agent prompt (conditional)
  8. Regression    Compare fingerprints against base branch baseline → new/existing
  9. Dismiss       Filter out dismissed findings by fingerprint match
 10. Persist       Write scan record + findings to SQLite (best-effort)
-11. Post          GitHub API → PR review (inline comments + summary)
+11. Post          GitHub API → categorized inline comments + off-diff caution comments + summary with actionable counts
 ```
 
 Stages 4-7 are shared between `scan` and `review` commands.
@@ -57,7 +57,7 @@ Vec<Finding> (with GraphContext: blast_radius, callers, domain_tags, is_public_a
 Vec<Finding> (severity adjusted based on graph context)
   │
   ▼ LlmProvider.deepen() — only if severity >= threshold AND blast_radius > 3
-Vec<Finding> (with llm_analysis text)
+Vec<Finding> (with llm_analysis, suggested_fix from ```diff fence, agent_prompt)
   │
   ▼ Build ReviewResult + format comments
 ReviewResult { findings, summary, head_sha }
@@ -73,8 +73,8 @@ Vec<Finding> (dismissed findings removed)
   ├─▶ --dry-run? → output JSON/text to stdout, skip posting
   │
   ▼ Post to GitHub
-  ├── Inline findings: POST /repos/{repo}/pulls/{pr}/reviews (COMMENT event)
-  ├── Off-diff findings: POST /repos/{repo}/issues/{pr}/comments
+  ├── Inline findings: POST /repos/{repo}/pulls/{pr}/reviews (categorized, collapsible fix + agent prompt)
+  ├── Off-diff findings: POST /repos/{repo}/issues/{pr}/comments (caution banner)
   └── Zero findings: POST summary comment ("no findings detected")
 ```
 
@@ -120,9 +120,14 @@ Triggered only when:
 
 Prompt includes:
 - Finding details (rule, message, severity, file, code snippet)
-- Enclosing function/class body (when `enclosing_context = true` in config)
+- Enclosing function/class body (truncated to 2000 chars, when `enclosing_context = true` in config)
 - Structural context from cartog (symbol name, blast radius, callers list, domain tags)
-- Task: explain real-world impact in 2-3 sentences
+- Task: explain real-world impact (2-3 sentences) + provide suggested fix as ```diff fenced block
+
+Response parsing:
+- `parse_llm_response()` scans for first ```diff fence → splits into analysis text + optional fix
+- If fix is present, `build_agent_prompt()` generates a self-contained prompt for AI agents (file path, line range, rule, fix)
+- Empty diff blocks are normalized to None
 
 ## Sequence Diagram — Review Command
 
@@ -166,7 +171,7 @@ CLI ──parse args──▶ cmd_review()
                       ├─▶ LlmProvider.deepen() (conditional)
                       │       └── POST /api/chat or /v1/messages
                       │
-                      └─▶ PipelineResult { review, diff, branch, base_branch, temp_dir }
+                      └─▶ PipelineResult { review, diff, branch, base_branch, scan_duration, rule_count, temp_dir }
                       │
                    cmd_review() continues:
                       │
@@ -179,9 +184,12 @@ CLI ──parse args──▶ cmd_review()
                       ├─▶ zero findings? → post_comment(clean summary)
                       │
                       └─▶ findings:
-                              ├── is_line_in_diff() → inline ReviewComment
-                              ├── off-diff → post_comment() per finding
-                              └── post_review(inline comments + summary)
+                              ├── prepare_review_payload()
+                              │     ├── is_line_in_diff() → categorized inline ReviewComment
+                              │     ├── off-diff → format_off_diff_comment() (caution banner)
+                              │     └── regenerate summary with off-diff listing
+                              ├── post_review(inline comments + summary)
+                              └── post_comment() per off-diff finding
 ```
 
 ## GitHub API Calls
@@ -199,15 +207,17 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 
 | Function | Output |
 |----------|--------|
-| `format_inline_comment(finding)` | Severity badge, rule ID, message, snippet, blast radius, domain, escalation, LLM analysis, CWE |
-| `format_summary(findings, duration, rules)` | Severity breakdown, top escalated findings, scan metadata |
+| `format_inline_comment(finding)` | Severity badge + category (Actionable/Nitpick), rule ID, message, snippet, blast radius, domain, escalation, LLM analysis, collapsible suggested fix, collapsible agent prompt, CWE |
+| `format_off_diff_comment(finding)` | `[!CAUTION]` banner with file:line + full inline comment content |
+| `format_summary(findings, off_diff, duration, rules)` | Actionable count, severity + category breakdown, top escalated findings, collapsible off-diff listing, scan metadata |
 | `format_clean_summary(duration, rules)` | "No findings detected" with scan metadata |
+| `classify_finding(finding)` | CommentCategory: Actionable (has fix OR severity >= Error) or Nitpick |
 
 ## Finding Persistence
 
 Scan and review results are persisted to a SQLite database (`.cartomancer.db` by default, configurable via `storage.db_path` in `.cartomancer.toml`).
 
-**Schema** (3 tables): `scans` (scan metadata), `findings` (per-finding data with fingerprint), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
+**Schema** (3 tables, v3): `scans` (scan metadata), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
 
 **Fingerprint**: SHA-256 of `rule_id:file_path:snippet_content`. Stable across scans — used for regression detection and dismissal matching. Line numbers excluded because they shift with unrelated edits.
 

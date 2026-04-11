@@ -37,7 +37,7 @@ Rust (single binary, performance, native cartog integration).
 | Subprocess for opengrep | Opengrep is a mature binary; FFI would be fragile and unnecessary |
 | Raw reqwest for GitHub API | Avoids octocrab dependency; GitHub REST API is simple enough |
 | cartog from crates.io | Native Rust integration, no subprocess overhead for graph queries |
-| LLM provider trait | Supports local Ollama for testing, Anthropic for production |
+| LLM provider trait | Supports local Ollama for testing, Anthropic for production; response parsed for analysis + suggested fix |
 | rusqlite directly (no ORM) | Simple schema (4 tables), fast enough synchronous, already a transitive dep via cartog |
 | PRAGMA user_version for schema migrations | Built-in SQLite integer, no extra migration table for a single-user embedded DB |
 | axum for webhook | Lightweight, tokio-native, matches cartog conventions |

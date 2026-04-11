@@ -43,6 +43,10 @@ pub struct PipelineResult {
     pub branch: String,
     /// Base branch name (base_ref) — used for regression comparison.
     pub base_branch: String,
+    /// Pipeline wall-clock duration — used for summary regeneration after off-diff splitting.
+    pub scan_duration: std::time::Duration,
+    /// Number of opengrep rules used — used for summary regeneration after off-diff splitting.
+    pub rule_count: usize,
     /// Temp dir handle — kept alive until review is posted, then dropped for cleanup.
     /// None if --work-dir was used.
     #[allow(dead_code)]
@@ -120,6 +124,8 @@ pub async fn run_pipeline(
             diff,
             branch,
             base_branch,
+            scan_duration: opengrep_elapsed,
+            rule_count,
             temp_dir,
         });
     }
@@ -138,7 +144,8 @@ pub async fn run_pipeline(
     findings.sort_by(|a, b| b.severity.cmp(&a.severity));
 
     // 9. Build ReviewResult
-    let summary = comment::format_summary(&findings, pipeline_start.elapsed(), rule_count);
+    let scan_duration = pipeline_start.elapsed();
+    let summary = comment::format_summary(&findings, &[], scan_duration, rule_count);
     let branch = pr_meta.head_ref;
     let base_branch = pr_meta.base_ref;
     let review = ReviewResult {
@@ -155,6 +162,8 @@ pub async fn run_pipeline(
         diff,
         branch,
         base_branch,
+        scan_duration,
+        rule_count,
         temp_dir,
     })
 }
@@ -396,8 +405,13 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
     let mut failed = 0u32;
     for handle in handles {
         match handle.await {
-            Ok((idx, Ok(analysis))) => {
+            Ok((idx, Ok(raw))) => {
+                let (analysis, fix) = llm::parse_llm_response(&raw);
                 findings[idx].llm_analysis = Some(analysis);
+                if let Some(ref fix) = fix {
+                    findings[idx].agent_prompt = Some(llm::build_agent_prompt(&findings[idx], fix));
+                }
+                findings[idx].suggested_fix = fix;
                 deepened += 1;
             }
             Ok((idx, Err(e))) => {
@@ -608,6 +622,8 @@ mod tests {
                 escalation_reasons: vec![],
                 is_new: None,
                 enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,
@@ -717,6 +733,8 @@ mod tests {
                 escalation_reasons: vec![],
                 is_new: None,
                 enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
             }
         }
 
@@ -838,6 +856,8 @@ mod tests {
                 escalation_reasons: vec![],
                 is_new: None,
                 enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
             }
         }
 
@@ -946,6 +966,8 @@ mod tests {
             },
             branch: "main".into(),
             base_branch: "main".into(),
+            scan_duration: std::time::Duration::from_secs(1),
+            rule_count: 10,
             temp_dir: None,
         };
         assert_eq!(result.review.pr_number, 42);

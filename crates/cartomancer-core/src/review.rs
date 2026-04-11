@@ -84,6 +84,8 @@ mod tests {
                 escalation_reasons: vec![],
                 is_new: None,
                 enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
             }],
             summary: "1 finding".into(),
             status: ReviewStatus::Completed,
