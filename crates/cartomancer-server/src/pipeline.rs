@@ -1360,6 +1360,131 @@ mod tests {
         }
     }
 
+    mod prepare_review_payload_tests {
+        use super::*;
+        use cartomancer_core::diff::{DiffChunk, PullRequestDiff};
+
+        fn make_finding(file: &str, line: u32) -> Finding {
+            Finding {
+                rule_id: "test-rule".into(),
+                message: "test finding".into(),
+                severity: cartomancer_core::severity::Severity::Warning,
+                file_path: file.into(),
+                start_line: line,
+                end_line: line + 1,
+                snippet: "code".into(),
+                cwe: None,
+                graph_context: None,
+                llm_analysis: None,
+                escalation_reasons: vec![],
+                is_new: None,
+                enclosing_context: None,
+                suggested_fix: None,
+                agent_prompt: None,
+            }
+        }
+
+        fn make_diff(file: &str, start: u32, lines: u32) -> PullRequestDiff {
+            PullRequestDiff {
+                chunks: vec![DiffChunk {
+                    file_path: file.into(),
+                    old_start: 1,
+                    new_start: start,
+                    old_lines: lines,
+                    new_lines: lines,
+                    content: String::new(),
+                }],
+                files_changed: vec![file.into()],
+            }
+        }
+
+        fn make_result(findings: Vec<Finding>, diff: PullRequestDiff) -> PipelineResult {
+            PipelineResult {
+                review: ReviewResult {
+                    pr_number: 1,
+                    repo_full_name: "o/r".into(),
+                    head_sha: "abc".into(),
+                    findings,
+                    summary: "original summary".into(),
+                    status: ReviewStatus::Completed,
+                },
+                diff,
+                branch: "feat".into(),
+                base_branch: "main".into(),
+                scan_duration: std::time::Duration::from_secs(1),
+                rule_count: 5,
+                scan_id: None,
+                temp_dir: None,
+            }
+        }
+
+        #[test]
+        fn empty_findings_returns_original_summary() {
+            let result = make_result(vec![], make_diff("a.rs", 1, 10));
+            let payload = prepare_review_payload(&result);
+            assert!(payload.inline_comments.is_empty());
+            assert!(payload.off_diff_bodies.is_empty());
+            assert_eq!(payload.summary, "original summary");
+        }
+
+        #[test]
+        fn inline_finding_becomes_review_comment() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            let findings = vec![make_finding("src/lib.rs", 12)];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 1);
+            assert_eq!(payload.inline_comments[0].path, "src/lib.rs");
+            assert_eq!(payload.inline_comments[0].line, 12);
+            assert!(payload.off_diff_bodies.is_empty());
+        }
+
+        #[test]
+        fn off_diff_finding_becomes_comment_body() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            // Finding at line 50, outside diff range 10..15
+            let findings = vec![make_finding("src/lib.rs", 50)];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert!(payload.inline_comments.is_empty());
+            assert_eq!(payload.off_diff_bodies.len(), 1);
+            // Summary is regenerated when off-diff findings exist
+            assert_ne!(payload.summary, "original summary");
+        }
+
+        #[test]
+        fn mixed_inline_and_off_diff() {
+            let diff = make_diff("src/lib.rs", 10, 5);
+            let findings = vec![
+                make_finding("src/lib.rs", 12), // inline (in diff 10..15)
+                make_finding("src/lib.rs", 50), // off-diff
+                make_finding("other.rs", 1),    // off-diff (different file)
+            ];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 1);
+            assert_eq!(payload.off_diff_bodies.len(), 2);
+        }
+
+        #[test]
+        fn all_inline_keeps_original_summary() {
+            let diff = make_diff("src/lib.rs", 1, 100);
+            let findings = vec![
+                make_finding("src/lib.rs", 10),
+                make_finding("src/lib.rs", 20),
+            ];
+            let result = make_result(findings, diff);
+            let payload = prepare_review_payload(&result);
+
+            assert_eq!(payload.inline_comments.len(), 2);
+            assert!(payload.off_diff_bodies.is_empty());
+            assert_eq!(payload.summary, "original summary");
+        }
+    }
+
     #[test]
     fn pipeline_result_has_correct_fields() {
         let review = ReviewResult {

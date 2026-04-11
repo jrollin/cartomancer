@@ -308,6 +308,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn webhook_semaphore_exhausted_returns_503() {
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            webhook_secret: TEST_SECRET.into(),
+            github_token: TEST_TOKEN.into(),
+            // Zero capacity — all requests will be rejected
+            review_semaphore: Arc::new(Semaphore::new(0)),
+        };
+        let payload = pr_event_payload("opened");
+        let sig = sign(payload.as_bytes());
+        let app = router(state);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/webhook")
+                    .header("x-hub-signature-256", &sig)
+                    .header("x-github-event", "pull_request")
+                    .body(Body::from(payload))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
     async fn webhook_malformed_payload_returns_bad_request() {
         let payload = b"not valid json";
         let sig = sign(payload);

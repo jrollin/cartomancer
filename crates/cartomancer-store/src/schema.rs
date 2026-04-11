@@ -236,6 +236,10 @@ mod tests {
             columns.contains(&"error_message".to_string()),
             "missing error_message column"
         );
+        assert!(
+            columns.contains(&"failed_at_stage".to_string()),
+            "missing failed_at_stage column"
+        );
     }
 
     #[test]
