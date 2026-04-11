@@ -393,4 +393,52 @@ mod tests {
         assert!(!fix.contains("-second"));
         assert!(analysis.contains("Analysis."));
     }
+
+    /// Mock provider that returns a fixed response for testing the deepen trait method.
+    struct MockProvider {
+        response: String,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for MockProvider {
+        fn name(&self) -> &str {
+            "mock"
+        }
+        async fn health_check(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn complete(&self, _prompt: &str) -> anyhow::Result<String> {
+            Ok(self.response.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn deepen_trait_method_parses_and_populates_fields() {
+        let provider = MockProvider {
+            response: "This is dangerous.\n\n```diff\n-old\n+new\n```\n".into(),
+        };
+        let mut f = make_finding();
+        provider.deepen(&mut f).await.unwrap();
+
+        assert_eq!(f.llm_analysis.as_deref(), Some("This is dangerous."));
+        assert_eq!(f.suggested_fix.as_deref(), Some("-old\n+new\n"));
+        assert!(f.agent_prompt.is_some());
+        assert!(f.agent_prompt.as_ref().unwrap().contains("@src/lib.rs"));
+    }
+
+    #[tokio::test]
+    async fn deepen_trait_method_no_fix_leaves_fields_none() {
+        let provider = MockProvider {
+            response: "Low impact, no fix needed.".into(),
+        };
+        let mut f = make_finding();
+        provider.deepen(&mut f).await.unwrap();
+
+        assert_eq!(
+            f.llm_analysis.as_deref(),
+            Some("Low impact, no fix needed.")
+        );
+        assert!(f.suggested_fix.is_none());
+        assert!(f.agent_prompt.is_none());
+    }
 }

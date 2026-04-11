@@ -320,4 +320,23 @@ mod tests {
             "FK constraint should reject non-existent scan_id"
         );
     }
+
+    #[test]
+    fn schema_migrate_v3_is_resumable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate partial v3 state: manually add one column, reset version to 2
+        conn.execute_batch("ALTER TABLE findings ADD COLUMN extra_col TEXT;")
+            .unwrap();
+        conn.pragma_update(None, "user_version", 2).unwrap();
+
+        // Re-running migrate should not fail even though v3 columns already exist
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
+    }
 }
