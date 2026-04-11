@@ -12,17 +12,17 @@ mod pipeline;
 mod webhook;
 
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use tokio::sync::Semaphore;
 use tracing::info;
 
 use cartomancer_core::finding::Finding;
 use cartomancer_core::severity::Severity;
 use cartomancer_github::client::GitHubClient;
-use cartomancer_github::diff::is_line_in_diff;
-use cartomancer_github::types::ReviewComment;
 use cartomancer_graph::enricher::CartogEnricher;
 use cartomancer_graph::escalator::SeverityEscalator;
 
@@ -44,16 +44,26 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Scan { path, format } => cmd_scan(&path, &config, &format).await,
-        Command::Serve { port } => {
-            todo!("webhook server on port {port}")
-        }
+        Command::Serve { port } => cmd_serve(port, config).await,
         Command::Review {
             repo,
             pr,
             work_dir,
             dry_run,
+            resume,
             format,
-        } => cmd_review(&repo, pr, work_dir.as_deref(), dry_run, &format, &config).await,
+        } => {
+            cmd_review(
+                &repo,
+                pr,
+                work_dir.as_deref(),
+                dry_run,
+                resume,
+                &format,
+                &config,
+            )
+            .await
+        }
         Command::History { branch, format } => cmd_history(branch.as_deref(), &format, &config),
         Command::Findings {
             scan_id,
@@ -73,60 +83,12 @@ async fn main() -> Result<()> {
     }
 }
 
-/// Findings partitioned by diff placement, with comments ready for posting.
-struct ReviewPayload {
-    summary: String,
-    inline_comments: Vec<ReviewComment>,
-    off_diff_bodies: Vec<String>,
-}
-
-/// Partition findings into inline review comments and off-diff comments,
-/// regenerating the summary when off-diff findings exist.
-fn prepare_review_payload(result: &pipeline::PipelineResult) -> ReviewPayload {
-    let review = &result.review;
-    let mut inline_comments = Vec::new();
-    let mut off_diff_findings: Vec<&Finding> = Vec::new();
-
-    for finding in &review.findings {
-        if is_line_in_diff(&result.diff, &finding.file_path, finding.start_line) {
-            inline_comments.push(ReviewComment {
-                path: finding.file_path.clone(),
-                line: finding.start_line,
-                body: comment::format_inline_comment(finding),
-            });
-        } else {
-            off_diff_findings.push(finding);
-        }
-    }
-
-    let summary = if off_diff_findings.is_empty() {
-        review.summary.clone()
-    } else {
-        comment::format_summary(
-            &review.findings,
-            &off_diff_findings,
-            result.scan_duration,
-            result.rule_count,
-        )
-    };
-
-    let off_diff_bodies = off_diff_findings
-        .iter()
-        .map(|f| comment::format_off_diff_comment(f))
-        .collect();
-
-    ReviewPayload {
-        summary,
-        inline_comments,
-        off_diff_bodies,
-    }
-}
-
 async fn cmd_review(
     repo: &str,
     pr: u64,
     work_dir: Option<&str>,
     dry_run: bool,
+    resume_scan_id: Option<i64>,
     format: &OutputFormat,
     config: &cartomancer_core::config::AppConfig,
 ) -> Result<()> {
@@ -145,30 +107,29 @@ async fn cmd_review(
     let github = GitHubClient::new(&token);
 
     // Run the pipeline
-    let mut result = pipeline::run_pipeline(config, &github, &token, repo, pr, work_dir).await?;
+    let mut result =
+        pipeline::run_pipeline(config, &github, &token, repo, pr, work_dir, resume_scan_id).await?;
 
-    // Annotate findings as new/existing (US-5) and filter dismissed (US-6)
-    pipeline::annotate_regression(
-        &config.storage.db_path,
-        repo,
-        &result.base_branch,
-        &mut result.review.findings,
-    );
-    pipeline::filter_dismissed(&config.storage.db_path, &mut result.review.findings);
-
-    // Persist scan results (BR-3: best-effort)
-    pipeline::persist_scan(
-        &config.storage.db_path,
-        repo,
-        &result.branch,
-        &result.review.head_sha,
-        "review",
-        Some(pr),
-        &result.review,
-    );
-
-    let review = &result.review;
     if dry_run {
+        // Dry run still annotates and filters, but doesn't post
+        pipeline::annotate_regression(
+            &config.storage.db_path,
+            repo,
+            &result.base_branch,
+            &mut result.review.findings,
+        );
+        pipeline::filter_dismissed(&config.storage.db_path, &mut result.review.findings);
+        pipeline::persist_scan(
+            &config.storage.db_path,
+            repo,
+            &result.branch,
+            &result.review.head_sha,
+            "review",
+            Some(pr),
+            &result.review,
+        );
+
+        let review = &result.review;
         match format {
             OutputFormat::Json => {
                 println!("{}", serde_json::to_string_pretty(review)?);
@@ -177,7 +138,7 @@ async fn cmd_review(
                 if review.findings.is_empty() {
                     println!("{}", review.summary);
                 } else {
-                    let payload = prepare_review_payload(&result);
+                    let payload = pipeline::prepare_review_payload(&result);
                     println!("{}", payload.summary);
                     println!();
                     print_findings(&review.findings);
@@ -193,37 +154,56 @@ async fn cmd_review(
         return Ok(());
     }
 
-    // Post to GitHub
-    if review.findings.is_empty() {
-        // Clean scan — post summary comment
-        github.post_comment(repo, pr, &review.summary).await?;
-        info!("clean summary posted for {repo}#{pr}");
-    } else {
-        let payload = prepare_review_payload(&result);
-
-        // Post review with inline comments
-        github
-            .post_review(
-                repo,
-                pr,
-                &review.head_sha,
-                &payload.summary,
-                payload.inline_comments,
-            )
-            .await?;
-
-        // Post off-diff findings as regular comments
-        for body in &payload.off_diff_bodies {
-            github.post_comment(repo, pr, body).await?;
-        }
-
-        info!(
-            total = review.findings.len(),
-            "review posted for {repo}#{pr}"
-        );
-    }
+    // Post to GitHub (annotate, filter, persist, post)
+    pipeline::finalize_and_post(config, &github, repo, pr, &mut result).await?;
 
     Ok(())
+}
+
+async fn cmd_serve(port: u16, config: cartomancer_core::config::AppConfig) -> Result<()> {
+    config::validate_for_serve(&config)?;
+
+    let webhook_secret = config
+        .github
+        .webhook_secret
+        .clone()
+        .or_else(|| std::env::var("CARTOMANCER_WEBHOOK_SECRET").ok())
+        .expect("validated by validate_for_serve");
+
+    let token = config
+        .github
+        .token
+        .clone()
+        .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+        .expect("validated by validate_for_serve");
+
+    let max_reviews = config.serve.max_concurrent_reviews;
+
+    let state = webhook::AppState {
+        config: Arc::new(config),
+        webhook_secret,
+        github_token: token,
+        review_semaphore: Arc::new(Semaphore::new(max_reviews)),
+    };
+
+    let app = webhook::router(state);
+    let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+    info!(%addr, max_concurrent_reviews = max_reviews, "starting webhook server");
+
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+
+    info!("server shut down");
+    Ok(())
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl+c");
+    info!("received shutdown signal");
 }
 
 async fn cmd_scan(

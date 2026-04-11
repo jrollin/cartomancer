@@ -61,8 +61,8 @@ impl Store {
     /// Insert a scan record and return its ID.
     pub fn insert_scan(&self, scan: &ScanRecord) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO scans (repo, branch, commit_sha, command, pr_number, finding_count, summary)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO scans (repo, branch, commit_sha, command, pr_number, finding_count, summary, stage, error_message)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 scan.repo,
                 scan.branch,
@@ -71,6 +71,8 @@ impl Store {
                 scan.pr_number.map(|n| n as i64),
                 scan.finding_count,
                 scan.summary,
+                scan.stage,
+                scan.error_message,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -128,7 +130,7 @@ impl Store {
     /// List scans, optionally filtered, ordered by created_at descending.
     pub fn list_scans(&self, filter: &ScanFilter) -> rusqlite::Result<Vec<ScanRecord>> {
         let mut sql = String::from(
-            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message
              FROM scans WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -157,6 +159,8 @@ impl Store {
                 finding_count: row.get(6)?,
                 summary: row.get(7)?,
                 created_at: Some(row.get(8)?),
+                stage: row.get(9)?,
+                error_message: row.get(10)?,
             })
         })?;
 
@@ -248,7 +252,7 @@ impl Store {
         branch: &str,
     ) -> rusqlite::Result<Option<ScanRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message
              FROM scans WHERE repo = ?1 AND branch = ?2
              ORDER BY id DESC LIMIT 1",
         )?;
@@ -264,6 +268,8 @@ impl Store {
                 finding_count: row.get(6)?,
                 summary: row.get(7)?,
                 created_at: Some(row.get(8)?),
+                stage: row.get(9)?,
+                error_message: row.get(10)?,
             })
         })?;
 
@@ -292,6 +298,111 @@ impl Store {
         let rows = stmt.query_map(params![scan_id], |row| row.get::<_, String>(0))?;
 
         rows.collect::<rusqlite::Result<HashSet<String>>>()
+    }
+
+    /// Update the pipeline stage for a scan.
+    pub fn update_scan_stage(&self, scan_id: i64, stage: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE scans SET stage = ?1 WHERE id = ?2",
+            params![stage, scan_id],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a scan as failed with an error message.
+    pub fn mark_scan_failed(&self, scan_id: i64, error: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE scans SET stage = 'failed', error_message = ?1 WHERE id = ?2",
+            params![error, scan_id],
+        )?;
+        Ok(())
+    }
+
+    /// Replace all findings for a scan (DELETE + INSERT in a transaction).
+    /// Used by pipeline stages to persist intermediate results.
+    pub fn update_scan_findings(&self, scan_id: i64, findings: &[Finding]) -> rusqlite::Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+
+        tx.execute("DELETE FROM findings WHERE scan_id = ?1", params![scan_id])?;
+
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO findings (scan_id, fingerprint, rule_id, severity, file_path,
+                 start_line, end_line, message, snippet, cwe, graph_context_json,
+                 llm_analysis, escalation_reasons_json, enclosing_context,
+                 suggested_fix, agent_prompt)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            )?;
+
+            for f in findings {
+                let fp = fingerprint::compute(&f.rule_id, &f.file_path, &f.snippet);
+                let graph_json = f
+                    .graph_context
+                    .as_ref()
+                    .map(|g| serde_json::to_string(g).unwrap_or_default());
+                let escalation_json = if f.escalation_reasons.is_empty() {
+                    None
+                } else {
+                    Some(serde_json::to_string(&f.escalation_reasons).unwrap_or_default())
+                };
+
+                stmt.execute(params![
+                    scan_id,
+                    fp,
+                    f.rule_id,
+                    f.severity.to_string(),
+                    f.file_path,
+                    f.start_line,
+                    f.end_line,
+                    f.message,
+                    f.snippet,
+                    f.cwe,
+                    graph_json,
+                    f.llm_analysis,
+                    escalation_json,
+                    f.enclosing_context,
+                    f.suggested_fix,
+                    f.agent_prompt,
+                ])?;
+            }
+        }
+
+        // Update the finding_count on the scan record
+        tx.execute(
+            "UPDATE scans SET finding_count = ?1 WHERE id = ?2",
+            params![findings.len() as u32, scan_id],
+        )?;
+
+        tx.commit()
+    }
+
+    /// Get a single scan by ID.
+    pub fn get_scan(&self, scan_id: i64) -> rusqlite::Result<Option<ScanRecord>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message
+             FROM scans WHERE id = ?1",
+        )?;
+
+        let mut rows = stmt.query_map(params![scan_id], |row| {
+            Ok(ScanRecord {
+                id: Some(row.get(0)?),
+                repo: row.get(1)?,
+                branch: row.get(2)?,
+                commit_sha: row.get(3)?,
+                command: row.get(4)?,
+                pr_number: row.get::<_, Option<i64>>(5)?.map(|n| n as u64),
+                finding_count: row.get(6)?,
+                summary: row.get(7)?,
+                created_at: Some(row.get(8)?),
+                stage: row.get(9)?,
+                error_message: row.get(10)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
     }
 
     /// Insert a dismissal and return its ID.
@@ -387,6 +498,8 @@ mod tests {
             finding_count: 2,
             summary: "Found 2 issues".into(),
             created_at: None,
+            stage: "completed".into(),
+            error_message: None,
         }
     }
 
@@ -967,5 +1080,88 @@ mod tests {
         let id = store.insert_scan(&sample_scan()).unwrap();
         assert!(id > 0);
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn store_update_scan_stage() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        store.update_scan_stage(scan_id, "enriched").unwrap();
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.stage, "enriched");
+    }
+
+    #[test]
+    fn store_mark_scan_failed() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        store
+            .mark_scan_failed(scan_id, "opengrep timed out")
+            .unwrap();
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.stage, "failed");
+        assert_eq!(scan.error_message.as_deref(), Some("opengrep timed out"));
+    }
+
+    #[test]
+    fn store_update_scan_findings_replaces() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        // Insert initial findings
+        let f1 = sample_finding();
+        store.insert_findings(scan_id, &[f1]).unwrap();
+        assert_eq!(store.get_findings(scan_id).unwrap().len(), 1);
+
+        // Replace with two new findings
+        let mut f2 = sample_finding();
+        f2.rule_id = "new-rule-1".into();
+        f2.snippet = "new code 1".into();
+        let mut f3 = sample_finding();
+        f3.rule_id = "new-rule-2".into();
+        f3.snippet = "new code 2".into();
+
+        store.update_scan_findings(scan_id, &[f2, f3]).unwrap();
+
+        let stored = store.get_findings(scan_id).unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[0].rule_id, "new-rule-1");
+        assert_eq!(stored[1].rule_id, "new-rule-2");
+
+        // Verify finding_count was updated
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.finding_count, 2);
+    }
+
+    #[test]
+    fn store_get_scan_by_id() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let scan = store.get_scan(scan_id).unwrap();
+        assert!(scan.is_some());
+        assert_eq!(scan.unwrap().repo, "owner/repo");
+    }
+
+    #[test]
+    fn store_get_scan_nonexistent() {
+        let store = test_store();
+        let scan = store.get_scan(999).unwrap();
+        assert!(scan.is_none());
+    }
+
+    #[test]
+    fn store_scan_stage_persisted_on_insert() {
+        let store = test_store();
+        let mut scan = sample_scan();
+        scan.stage = "pending".into();
+        let scan_id = store.insert_scan(&scan).unwrap();
+
+        let stored = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(stored.stage, "pending");
     }
 }

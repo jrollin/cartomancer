@@ -34,7 +34,9 @@ cartomancer-server (binary)
 - `GraphContext` (core::finding) — blast radius, callers, domain tags from cartog
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
+- `PipelineStage` (core::review) — Pending → Scanned → Enriched → Escalated → Deepened → Completed / Failed
 - `AppConfig` (core::config) — deserialized from `.cartomancer.toml`
+- `ServeConfig` (core::config) — `max_concurrent_reviews` for webhook server
 - `StorageConfig` (core::config) — `db_path` for finding persistence
 - `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
 - `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic; `AnthropicProvider::with_base_url` for test overrides
@@ -51,13 +53,13 @@ cartomancer-server (binary)
 
 ```
 cartomancer scan <path> [--format text|json]
-cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--format text|json]
+cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--resume <scan-id>] [--format text|json]
 cartomancer history [--branch <name>] [--format text|json]
 cartomancer findings [<scan-id>] [--rule <pat>] [--severity <lvl>] [--file <pat>] [--branch <name>] [--format text|json]
 cartomancer dismiss <scan-id> <finding-index> [--reason <text>]
 cartomancer dismissed [--format text|json]
 cartomancer undismiss <dismissal-id>
-cartomancer serve [--port <n>]                    # not yet implemented
+cartomancer serve [--port <n>]                    # webhook server for GitHub events
 ```
 
 ## Review Pipeline Stages

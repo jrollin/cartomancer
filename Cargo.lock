@@ -392,9 +392,11 @@ dependencies = [
  "cartomancer-graph",
  "cartomancer-store",
  "clap",
+ "hmac",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "tokio",
  "toml",
@@ -421,9 +423,11 @@ version = "0.4.0"
 dependencies = [
  "anyhow",
  "cartomancer-core",
+ "hmac",
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "tokio",
  "tracing",
 ]
@@ -774,6 +778,7 @@ checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
  "block-buffer",
  "crypto-common",
+ "subtle",
 ]
 
 [[package]]
@@ -1170,6 +1175,15 @@ dependencies = [
  "thiserror",
  "ureq 2.12.1",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "hmac"
+version = "0.12.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
+dependencies = [
+ "digest",
 ]
 
 [[package]]

@@ -17,6 +17,57 @@ pub enum ReviewStatus {
     Failed { reason: String },
 }
 
+/// Pipeline stage for store-backed resumability.
+///
+/// Tracks how far a scan has progressed through the pipeline.
+/// Stages are ordered: each stage implies all prior stages are complete.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStage {
+    Pending,
+    Scanned,
+    Enriched,
+    Escalated,
+    Deepened,
+    Completed,
+    Failed,
+}
+
+impl PipelineStage {
+    /// Parse from a database string value.
+    pub fn from_db(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(Self::Pending),
+            "scanned" => Some(Self::Scanned),
+            "enriched" => Some(Self::Enriched),
+            "escalated" => Some(Self::Escalated),
+            "deepened" => Some(Self::Deepened),
+            "completed" => Some(Self::Completed),
+            "failed" => Some(Self::Failed),
+            _ => None,
+        }
+    }
+
+    /// Convert to a database string value.
+    pub fn as_db_str(&self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Scanned => "scanned",
+            Self::Enriched => "enriched",
+            Self::Escalated => "escalated",
+            Self::Deepened => "deepened",
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+impl std::fmt::Display for PipelineStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_db_str())
+    }
+}
+
 /// Final review result ready for posting to GitHub.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReviewResult {

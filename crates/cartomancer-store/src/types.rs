@@ -14,6 +14,15 @@ pub struct ScanRecord {
     pub finding_count: u32,
     pub summary: String,
     pub created_at: Option<String>,
+    /// Pipeline stage (v4): tracks how far the scan progressed.
+    #[serde(default = "default_stage")]
+    pub stage: String,
+    /// Error message when stage is "failed" (v4).
+    pub error_message: Option<String>,
+}
+
+fn default_stage() -> String {
+    "completed".into()
 }
 
 /// A persisted finding with its fingerprint (maps to the `findings` table).

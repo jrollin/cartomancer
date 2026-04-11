@@ -17,6 +17,8 @@ pub struct AppConfig {
     pub severity: SeverityConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub serve: ServeConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -202,6 +204,26 @@ fn default_db_path() -> String {
     ".cartomancer.db".into()
 }
 
+/// Serve (webhook server) configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServeConfig {
+    /// Maximum number of concurrent PR reviews (bounded by semaphore).
+    #[serde(default = "default_max_concurrent_reviews")]
+    pub max_concurrent_reviews: usize,
+}
+
+impl Default for ServeConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_reviews: default_max_concurrent_reviews(),
+        }
+    }
+}
+
+fn default_max_concurrent_reviews() -> usize {
+    4
+}
+
 fn default_blast_threshold() -> u32 {
     5
 }
@@ -212,6 +234,56 @@ fn default_llm_threshold() -> Severity {
 
 fn default_impact_depth() -> u32 {
     3
+}
+
+impl AppConfig {
+    /// Validate semantic constraints that serde cannot enforce.
+    /// Collects all errors before returning, so the user sees everything at once.
+    pub fn validate(&self) -> Result<(), String> {
+        let mut errors = Vec::<&str>::new();
+
+        if self.opengrep.rules.is_empty() {
+            errors.push("opengrep.rules must not be empty");
+        }
+        if self.opengrep.timeout_seconds == 0 {
+            errors.push("opengrep.timeout_seconds must be > 0");
+        }
+        if let Some(mult) = self.opengrep.dynamic_timeout_max_multiplier {
+            if mult <= 0.0 {
+                errors.push("opengrep.dynamic_timeout_max_multiplier must be > 0.0");
+            }
+        }
+
+        if self.severity.blast_radius_threshold == 0 {
+            errors.push("severity.blast_radius_threshold must be > 0");
+        }
+        if self.severity.impact_depth == 0 || self.severity.impact_depth > 20 {
+            errors.push("severity.impact_depth must be between 1 and 20");
+        }
+
+        if self.llm.max_tokens == 0 {
+            errors.push("llm.max_tokens must be > 0");
+        }
+        if self.llm.max_concurrent_deepening == 0 {
+            errors.push("llm.max_concurrent_deepening must be > 0");
+        }
+        if matches!(self.llm.provider, LlmBackend::Anthropic) {
+            let has_key =
+                self.llm.anthropic_api_key.is_some() || std::env::var("ANTHROPIC_API_KEY").is_ok();
+            if !has_key {
+                errors.push(
+                    "llm.anthropic_api_key required when provider is anthropic \
+                     (or set ANTHROPIC_API_KEY env var)",
+                );
+            }
+        }
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -345,5 +417,117 @@ db_path = "/tmp/custom.db"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.storage.db_path, "/tmp/custom.db");
+    }
+
+    mod validate {
+        use super::*;
+
+        #[test]
+        fn default_config_is_valid() {
+            let config = AppConfig::default();
+            assert!(config.validate().is_ok());
+        }
+
+        #[test]
+        fn empty_rules_rejected() {
+            let mut config = AppConfig::default();
+            config.opengrep.rules = vec![];
+            let err = config.validate().unwrap_err();
+            assert!(err.contains("rules must not be empty"), "got: {err}");
+        }
+
+        #[test]
+        fn zero_timeout_rejected() {
+            let mut config = AppConfig::default();
+            config.opengrep.timeout_seconds = 0;
+            let err = config.validate().unwrap_err();
+            assert!(err.contains("timeout_seconds must be > 0"), "got: {err}");
+        }
+
+        #[test]
+        fn zero_blast_threshold_rejected() {
+            let mut config = AppConfig::default();
+            config.severity.blast_radius_threshold = 0;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("blast_radius_threshold must be > 0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn impact_depth_out_of_range_rejected() {
+            let mut config = AppConfig::default();
+            config.severity.impact_depth = 0;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("impact_depth must be between 1 and 20"),
+                "got: {err}"
+            );
+
+            config.severity.impact_depth = 21;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("impact_depth must be between 1 and 20"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn zero_max_tokens_rejected() {
+            let mut config = AppConfig::default();
+            config.llm.max_tokens = 0;
+            let err = config.validate().unwrap_err();
+            assert!(err.contains("max_tokens must be > 0"), "got: {err}");
+        }
+
+        #[test]
+        fn zero_concurrency_rejected() {
+            let mut config = AppConfig::default();
+            config.llm.max_concurrent_deepening = 0;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("max_concurrent_deepening must be > 0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn negative_dynamic_timeout_multiplier_rejected() {
+            let mut config = AppConfig::default();
+            config.opengrep.dynamic_timeout_max_multiplier = Some(-1.0);
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("dynamic_timeout_max_multiplier must be > 0.0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn anthropic_without_key_rejected() {
+            let mut config = AppConfig::default();
+            config.llm.provider = LlmBackend::Anthropic;
+            config.llm.anthropic_api_key = None;
+            // Clear env var for this test
+            std::env::remove_var("ANTHROPIC_API_KEY");
+            let err = config.validate().unwrap_err();
+            assert!(err.contains("anthropic_api_key required"), "got: {err}");
+        }
+
+        #[test]
+        fn multiple_errors_collected() {
+            let mut config = AppConfig::default();
+            config.opengrep.rules = vec![];
+            config.opengrep.timeout_seconds = 0;
+            config.severity.blast_radius_threshold = 0;
+            let err = config.validate().unwrap_err();
+            // Should contain all three errors
+            assert!(err.contains("rules must not be empty"), "got: {err}");
+            assert!(err.contains("timeout_seconds must be > 0"), "got: {err}");
+            assert!(
+                err.contains("blast_radius_threshold must be > 0"),
+                "got: {err}"
+            );
+        }
     }
 }

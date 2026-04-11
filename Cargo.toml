@@ -21,8 +21,12 @@ cartomancer = { path = "crates/cartomancer-server", version = "0.4.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
+# Crypto
+hmac = "0.12"
+sha2 = "0.10"
+
 # Async runtime
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "process", "fs", "signal"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

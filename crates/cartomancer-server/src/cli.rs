@@ -110,6 +110,10 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
 
+        /// Resume a previously failed scan from its last completed stage
+        #[arg(long)]
+        resume: Option<i64>,
+
         /// Output format
         #[arg(long, default_value = "text")]
         format: OutputFormat,
@@ -136,12 +140,14 @@ mod tests {
                 pr,
                 work_dir,
                 dry_run,
+                resume,
                 ..
             } => {
                 assert_eq!(repo, "owner/repo");
                 assert_eq!(pr, 42);
                 assert!(work_dir.is_none());
                 assert!(!dry_run);
+                assert!(resume.is_none());
             }
             _ => panic!("expected Review command"),
         }
@@ -157,6 +163,8 @@ mod tests {
             "--work-dir",
             "/tmp/repo",
             "--dry-run",
+            "--resume",
+            "42",
             "--format",
             "json",
         ])
@@ -167,12 +175,14 @@ mod tests {
                 pr,
                 work_dir,
                 dry_run,
+                resume,
                 format,
             } => {
                 assert_eq!(repo, "owner/repo");
                 assert_eq!(pr, 7);
                 assert_eq!(work_dir.as_deref(), Some("/tmp/repo"));
                 assert!(dry_run);
+                assert_eq!(resume, Some(42));
                 assert!(matches!(format, OutputFormat::Json));
             }
             _ => panic!("expected Review command"),
