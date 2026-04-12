@@ -92,11 +92,7 @@ fn dismiss_finding(store: &Store, finding: &Finding, reason: Option<&str>) -> i6
         &finding.file_path,
         &finding.snippet,
     );
-    let snippet_hash = cartomancer_store::fingerprint::compute(
-        &finding.rule_id,
-        &finding.file_path,
-        &finding.snippet,
-    );
+    let snippet_hash = cartomancer_store::fingerprint::snippet_hash(&finding.snippet);
     let dismissal = Dismissal {
         id: None,
         fingerprint: fp,

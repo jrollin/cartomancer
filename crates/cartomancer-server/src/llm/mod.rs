@@ -128,7 +128,10 @@ pub fn load_knowledge(work_dir: &Path, config: &KnowledgeConfig) -> String {
                 content
             }
         }
-        Err(_) => String::new(),
+        Err(e) => {
+            warn!(path = %path, full_path = %full_path.display(), err = %e, "failed to read knowledge file");
+            String::new()
+        }
     }
 }
 
