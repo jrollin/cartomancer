@@ -97,11 +97,16 @@ impl Store {
                 let graph_json = f
                     .graph_context
                     .as_ref()
-                    .map(|g| serde_json::to_string(g).unwrap_or_default());
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 let escalation_json = if f.escalation_reasons.is_empty() {
                     None
                 } else {
-                    Some(serde_json::to_string(&f.escalation_reasons).unwrap_or_default())
+                    Some(
+                        serde_json::to_string(&f.escalation_reasons)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                    )
                 };
 
                 stmt.execute(params![
@@ -349,11 +354,16 @@ impl Store {
                 let graph_json = f
                     .graph_context
                     .as_ref()
-                    .map(|g| serde_json::to_string(g).unwrap_or_default());
+                    .map(serde_json::to_string)
+                    .transpose()
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
                 let escalation_json = if f.escalation_reasons.is_empty() {
                     None
                 } else {
-                    Some(serde_json::to_string(&f.escalation_reasons).unwrap_or_default())
+                    Some(
+                        serde_json::to_string(&f.escalation_reasons)
+                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+                    )
                 };
 
                 stmt.execute(params![

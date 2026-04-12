@@ -44,3 +44,10 @@ max_tokens = 4096
 blast_radius_threshold = 5
 llm_deepening_threshold = "error"
 # impact_depth = 3
+
+# [github]
+# token = ""                     # prefer GITHUB_TOKEN env var
+# webhook_secret = ""            # required for `cartomancer serve` (HMAC-SHA256 validation)
+
+# [serve]
+# max_concurrent_reviews = 4     # semaphore-bounded concurrent PR reviews

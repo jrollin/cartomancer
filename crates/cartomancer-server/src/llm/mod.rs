@@ -81,12 +81,13 @@ pub fn create_provider(
                 .anthropic_model
                 .as_deref()
                 .unwrap_or("claude-sonnet-4-20250514");
-            Ok(Box::new(anthropic::AnthropicProvider::new(
+            let provider = anthropic::AnthropicProvider::new(
                 &api_key,
                 model,
                 config.max_tokens,
                 system_prompt.map(|s| s.to_string()),
-            )))
+            )?;
+            Ok(Box::new(provider))
         }
     }
 }

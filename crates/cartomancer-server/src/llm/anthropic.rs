@@ -47,7 +47,12 @@ const MAX_TOKENS_MIN: u32 = 1;
 const MAX_TOKENS_MAX: u32 = 128_000;
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str, model: &str, max_tokens: u32, system_prompt: Option<String>) -> Self {
+    pub fn new(
+        api_key: &str,
+        model: &str,
+        max_tokens: u32,
+        system_prompt: Option<String>,
+    ) -> Result<Self> {
         Self::with_base_url(DEFAULT_BASE_URL, api_key, model, max_tokens, system_prompt)
     }
 
@@ -58,18 +63,19 @@ impl AnthropicProvider {
         model: &str,
         max_tokens: u32,
         system_prompt: Option<String>,
-    ) -> Self {
-        Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .expect("failed to build HTTP client"),
+    ) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .context("failed to build HTTP client")?;
+        Ok(Self {
+            http,
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
             max_tokens,
             system_prompt,
-        }
+        })
     }
 
     /// Validate that `max_tokens` is within the Anthropic API range (1..=128,000).
@@ -221,6 +227,7 @@ mod tests {
 
     fn provider_for(server: &MockServer) -> AnthropicProvider {
         AnthropicProvider::with_base_url(&server.uri(), "test-key", "test-model", 1024, None)
+            .expect("failed to build test provider")
     }
 
     #[tokio::test]

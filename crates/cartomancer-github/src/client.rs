@@ -20,16 +20,16 @@ pub struct GitHubClient {
 
 impl GitHubClient {
     /// Create a new client with the given API token.
-    pub fn new(token: &str) -> Self {
+    pub fn new(token: &str) -> Result<Self> {
         let http = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .user_agent(USER_AGENT)
             .build()
-            .expect("failed to build HTTP client");
-        Self {
+            .context("failed to build HTTP client")?;
+        Ok(Self {
             http,
             token: token.to_string(),
-        }
+        })
     }
 
     /// Fetch PR metadata (head SHA, base SHA, title, refs).
@@ -231,7 +231,12 @@ mod tests {
 
     #[test]
     fn client_constructor_sets_token() {
-        let client = GitHubClient::new("test-token-123");
+        let client = GitHubClient::new("test-token-123").unwrap();
         assert_eq!(client.token, "test-token-123");
+    }
+
+    #[test]
+    fn client_constructor_returns_result() {
+        assert!(GitHubClient::new("any-token").is_ok());
     }
 }

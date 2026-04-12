@@ -130,7 +130,7 @@ async fn cmd_review(
             )
         })?;
 
-    let github = GitHubClient::new(&token);
+    let github = GitHubClient::new(&token)?;
 
     // Run the pipeline
     let mut result =

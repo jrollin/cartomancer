@@ -41,7 +41,7 @@ cartomancer-server (binary)
 - `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
 - `KnowledgeConfig` (core::config) — knowledge file path, system prompt, max chars, per-rule overrides
 - `RuleOverride` (core::config) — per-rule min/max severity and always_deepen flag
-- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic and accepts optional system prompt; `AnthropicProvider::with_base_url` for test overrides
+- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic and accepts optional system prompt; `AnthropicProvider::new`/`with_base_url` return `Result`
 - `PrMetadata` (github::types) — PR head/base SHA, refs, title from GitHub API
 - `ReviewComment` (github::types) — inline comment for PR Review API
 - `CartogEnricher` (graph::enricher) — wraps cartog::db::Database
