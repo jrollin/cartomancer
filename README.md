@@ -2,6 +2,9 @@
 
 [![CI](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml/badge.svg)](https://github.com/jrollin/cartomancer/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/jrollin/cartomancer/branch/main/graph/badge.svg)](https://codecov.io/gh/jrollin/cartomancer)
+[![crates.io](https://img.shields.io/crates/v/cartomancer.svg)](https://crates.io/crates/cartomancer)
+[![docs.rs](https://docs.rs/cartomancer/badge.svg)](https://docs.rs/cartomancer)
+[![MSRV](https://img.shields.io/badge/MSRV-1.77-blue.svg)](https://blog.rust-lang.org/2024/03/21/Rust-1.77.0.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > PR review with blast radius awareness.
