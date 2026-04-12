@@ -135,7 +135,7 @@ async fn run_webhook_review(
     repo: &str,
     pr: u64,
 ) -> anyhow::Result<()> {
-    let github = GitHubClient::new(token);
+    let github = GitHubClient::new(token)?;
 
     let mut result = pipeline::run_pipeline(config, &github, token, repo, pr, None, None).await?;
     pipeline::finalize_and_post(config, &github, repo, pr, &mut result).await?;

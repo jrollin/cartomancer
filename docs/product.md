@@ -21,9 +21,11 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 ## Key Features
 
 - **Opengrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`, cross-function taint analysis, enclosing context for LLM deepening
+- **Custom rule YAML**: auto-discover team-specific business rules and coding conventions from `.cartomancer/rules/`
 - **Blast radius via cartog**: transitive impact analysis, caller graphs, domain detection
-- **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius
+- **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius; per-rule severity overrides via `[knowledge.rules]`
 - **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production), with suggested fixes as unified diffs and AI agent prompts
+- **Company knowledge base**: inject team-specific context (`.cartomancer/knowledge.md`) and custom system prompts into LLM deepening for company-aware analysis
 - **Comment categories**: findings classified as Actionable (has fix or severity >= Error) or Nitpick, with collapsible sections for fixes and agent prompts
 - **GitHub PR comments**: categorized inline comments, off-diff caution banners, summary with actionable counts
 - **Finding persistence**: SQLite storage of scan results, regression detection (new vs. existing findings), and false positive dismissal
@@ -31,9 +33,10 @@ A SQL injection in a dead function is noise. A SQL injection reachable from 47 c
 ## Pipeline
 
 ```
-GitHub webhook → fetch diff → opengrep scan → cartog enrich
-  → escalate severity → LLM deepen (conditional)
-  → regression check → dismiss filter → post comments + persist
+GitHub webhook → fetch diff → opengrep scan (+ custom rules)
+  → cartog enrich → escalate severity (+ rule overrides)
+  → LLM deepen (+ company knowledge) → regression check
+  → dismiss filter → post comments + persist
 ```
 
 ## Positioning

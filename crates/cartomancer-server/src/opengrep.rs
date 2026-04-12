@@ -1,5 +1,6 @@
 //! Opengrep subprocess runner and JSON output parser.
 
+use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
@@ -9,6 +10,8 @@ use tracing::{debug, info, warn};
 use cartomancer_core::config::OpengrepConfig;
 use cartomancer_core::finding::Finding;
 use cartomancer_core::severity::Severity;
+
+use crate::path_security::validate_path_within;
 
 /// Opengrep JSON output structure.
 #[derive(serde::Deserialize)]
@@ -58,6 +61,39 @@ struct OpengrepError {
     message: String,
 }
 
+/// Discover custom rule files from a configured rules directory.
+///
+/// Returns paths to pass as additional `--config` arguments to opengrep.
+/// Returns an empty vec if:
+/// - `rules_dir` is `None` or empty
+/// - The directory doesn't exist
+/// - The path fails security validation (path traversal)
+pub fn discover_custom_rules(target_dir: &str, rules_dir: Option<&str>) -> Vec<String> {
+    let Some(dir) = rules_dir else {
+        return vec![];
+    };
+    if dir.is_empty() {
+        return vec![];
+    }
+
+    let base = Path::new(target_dir);
+    match validate_path_within(base, dir) {
+        Ok(validated) => {
+            if validated.is_dir() {
+                info!(path = %validated.display(), "discovered custom rules directory");
+                vec![validated.to_string_lossy().into_owned()]
+            } else {
+                debug!(path = %dir, "custom rules path is not a directory, skipping");
+                vec![]
+            }
+        }
+        Err(e) => {
+            warn!(path = %dir, err = %e, "custom rules directory path rejected");
+            vec![]
+        }
+    }
+}
+
 /// Build the opengrep `Command` with all flags.
 ///
 /// Extracted for testability — the returned command is ready to spawn.
@@ -65,6 +101,7 @@ fn build_command(
     target_dir: &str,
     config: &OpengrepConfig,
     baseline_commit: Option<&str>,
+    extra_configs: &[String],
 ) -> Command {
     let mut cmd = Command::new("opengrep");
     cmd.arg("scan").arg("--json").arg("--quiet");
@@ -113,11 +150,19 @@ fn build_command(
         cmd.arg("--baseline-commit").arg(sha);
     }
 
+    for extra in extra_configs {
+        cmd.arg("--config").arg(extra);
+    }
+
     cmd
 }
 
 /// Format the command for debug logging.
-fn format_command_display(config: &OpengrepConfig, baseline_commit: Option<&str>) -> String {
+fn format_command_display(
+    config: &OpengrepConfig,
+    baseline_commit: Option<&str>,
+    extra_configs: &[String],
+) -> String {
     let mut parts = vec!["opengrep scan --json --quiet".to_string()];
 
     if config.dynamic_timeout {
@@ -153,6 +198,9 @@ fn format_command_display(config: &OpengrepConfig, baseline_commit: Option<&str>
     if let Some(sha) = baseline_commit {
         parts.push(format!("--baseline-commit {sha}"));
     }
+    for extra in extra_configs {
+        parts.push(format!("--config {extra}"));
+    }
     parts.join(" ")
 }
 
@@ -165,9 +213,10 @@ pub async fn run_opengrep(
     config: &OpengrepConfig,
     baseline_commit: Option<&str>,
 ) -> Result<Vec<Finding>> {
-    let mut cmd = build_command(target_dir, config, baseline_commit);
+    let extra_configs = discover_custom_rules(target_dir, config.rules_dir.as_deref());
+    let mut cmd = build_command(target_dir, config, baseline_commit, &extra_configs);
 
-    let cmd_display = format_command_display(config, baseline_commit);
+    let cmd_display = format_command_display(config, baseline_commit, &extra_configs);
     info!(cmd = %cmd_display, target_dir, "executing opengrep");
 
     let start = std::time::Instant::now();
@@ -347,7 +396,7 @@ mod tests {
     #[test]
     fn build_command_includes_exclude_flags() {
         let cfg = config_with(vec![".github/".into(), "config/database.yml".into()], None);
-        let cmd = build_command("/tmp", &cfg, Some("abc123"));
+        let cmd = build_command("/tmp", &cfg, Some("abc123"), &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         let positions = flag_positions(&args, "--exclude");
         assert_eq!(positions.len(), 2);
@@ -358,7 +407,7 @@ mod tests {
     #[test]
     fn build_command_default_omits_exclude_and_jobs() {
         let cfg = OpengrepConfig::default();
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(!args.contains(&std::ffi::OsStr::new("--exclude")));
         assert!(!args.contains(&std::ffi::OsStr::new("-j")));
@@ -367,7 +416,7 @@ mod tests {
     #[test]
     fn build_command_includes_jobs_flag() {
         let cfg = config_with(vec![], Some(4));
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         let positions = flag_positions(&args, "-j");
         assert_eq!(positions.len(), 1);
@@ -377,7 +426,7 @@ mod tests {
     #[test]
     fn format_command_display_full() {
         let cfg = config_with(vec![".github/".into()], Some(8));
-        let display = format_command_display(&cfg, Some("abc"));
+        let display = format_command_display(&cfg, Some("abc"), &[]);
         assert_eq!(
             display,
             "opengrep scan --json --quiet --timeout 60 --config auto --exclude .github/ -j 8 --baseline-commit abc"
@@ -387,7 +436,7 @@ mod tests {
     #[test]
     fn format_command_display_minimal() {
         let cfg = OpengrepConfig::default();
-        let display = format_command_display(&cfg, None);
+        let display = format_command_display(&cfg, None, &[]);
         assert_eq!(
             display,
             "opengrep scan --json --quiet --timeout 120 --config auto"
@@ -400,7 +449,7 @@ mod tests {
             taint_intrafile: true,
             ..config_with(vec![], None)
         };
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(args.contains(&std::ffi::OsStr::new("--taint-intrafile")));
     }
@@ -411,7 +460,7 @@ mod tests {
             ignore_pattern: Some("nosec".into()),
             ..config_with(vec![], None)
         };
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(args.contains(&std::ffi::OsStr::new("--opengrep-ignore-pattern=nosec")));
     }
@@ -422,7 +471,7 @@ mod tests {
             enclosing_context: true,
             ..config_with(vec![], None)
         };
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(args.contains(&std::ffi::OsStr::new("--experimental")));
         assert!(args.contains(&std::ffi::OsStr::new("--output-enclosing-context")));
@@ -434,7 +483,7 @@ mod tests {
             dynamic_timeout: true,
             ..config_with(vec![], None)
         };
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
         assert!(!args.contains(&std::ffi::OsStr::new("--timeout")));
@@ -448,7 +497,7 @@ mod tests {
             dynamic_timeout_max_multiplier: Some(5.0),
             ..config_with(vec![], None)
         };
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
         assert!(args.contains(&std::ffi::OsStr::new("--dynamic-timeout-unit-kb")));
@@ -458,11 +507,72 @@ mod tests {
     #[test]
     fn build_command_default_omits_new_flags() {
         let cfg = OpengrepConfig::default();
-        let cmd = build_command("/tmp", &cfg, None);
+        let cmd = build_command("/tmp", &cfg, None, &[]);
         let args: Vec<_> = cmd.as_std().get_args().collect();
         assert!(!args.contains(&std::ffi::OsStr::new("--taint-intrafile")));
         assert!(!args.contains(&std::ffi::OsStr::new("--experimental")));
         assert!(!args.contains(&std::ffi::OsStr::new("--dynamic-timeout")));
         assert!(args.contains(&std::ffi::OsStr::new("--timeout")));
+    }
+
+    #[test]
+    fn build_command_with_extra_configs() {
+        let cfg = config_with(vec![], None);
+        let extras = vec!["/tmp/rules".to_string()];
+        let cmd = build_command("/tmp", &cfg, None, &extras);
+        let args: Vec<_> = cmd.as_std().get_args().collect();
+        // Should have --config auto (from rules) AND --config /tmp/rules (from extra)
+        let positions = flag_positions(&args, "--config");
+        assert_eq!(positions.len(), 2);
+        assert_eq!(args[positions[0] + 1], "auto");
+        assert_eq!(args[positions[1] + 1], "/tmp/rules");
+    }
+
+    #[test]
+    fn format_command_display_with_extra_configs() {
+        let cfg = OpengrepConfig::default();
+        let extras = vec!["/project/.cartomancer/rules".to_string()];
+        let display = format_command_display(&cfg, None, &extras);
+        assert!(
+            display.contains("--config /project/.cartomancer/rules"),
+            "got: {display}"
+        );
+    }
+
+    #[test]
+    fn discover_custom_rules_none_returns_empty() {
+        assert!(discover_custom_rules("/tmp", None).is_empty());
+    }
+
+    #[test]
+    fn discover_custom_rules_empty_string_returns_empty() {
+        assert!(discover_custom_rules("/tmp", Some("")).is_empty());
+    }
+
+    #[test]
+    fn discover_custom_rules_nonexistent_dir_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result =
+            discover_custom_rules(tmp.path().to_str().unwrap(), Some(".cartomancer/rules"));
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn discover_custom_rules_existing_dir_returns_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let rules_dir = tmp.path().join(".cartomancer").join("rules");
+        std::fs::create_dir_all(&rules_dir).unwrap();
+
+        let result =
+            discover_custom_rules(tmp.path().to_str().unwrap(), Some(".cartomancer/rules"));
+        assert_eq!(result.len(), 1);
+        assert!(result[0].contains(".cartomancer"));
+    }
+
+    #[test]
+    fn discover_custom_rules_traversal_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = discover_custom_rules(tmp.path().to_str().unwrap(), Some("../../etc"));
+        assert!(result.is_empty());
     }
 }

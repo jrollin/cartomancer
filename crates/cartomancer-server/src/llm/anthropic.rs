@@ -12,6 +12,7 @@ pub struct AnthropicProvider {
     api_key: String,
     model: String,
     max_tokens: u32,
+    system_prompt: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -19,6 +20,8 @@ struct MessagesRequest<'a> {
     model: &'a str,
     max_tokens: u32,
     messages: Vec<ApiMessage<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    system: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -44,22 +47,35 @@ const MAX_TOKENS_MIN: u32 = 1;
 const MAX_TOKENS_MAX: u32 = 128_000;
 
 impl AnthropicProvider {
-    pub fn new(api_key: &str, model: &str, max_tokens: u32) -> Self {
-        Self::with_base_url(DEFAULT_BASE_URL, api_key, model, max_tokens)
+    pub fn new(
+        api_key: &str,
+        model: &str,
+        max_tokens: u32,
+        system_prompt: Option<String>,
+    ) -> Result<Self> {
+        Self::with_base_url(DEFAULT_BASE_URL, api_key, model, max_tokens, system_prompt)
     }
 
     /// Build a provider pointing at an arbitrary base URL (useful for testing).
-    pub fn with_base_url(base_url: &str, api_key: &str, model: &str, max_tokens: u32) -> Self {
-        Self {
-            http: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
-                .build()
-                .expect("failed to build HTTP client"),
+    pub fn with_base_url(
+        base_url: &str,
+        api_key: &str,
+        model: &str,
+        max_tokens: u32,
+        system_prompt: Option<String>,
+    ) -> Result<Self> {
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .context("failed to build HTTP client")?;
+        Ok(Self {
+            http,
             base_url: base_url.trim_end_matches('/').to_string(),
             api_key: api_key.to_string(),
             model: model.to_string(),
             max_tokens,
-        }
+            system_prompt,
+        })
     }
 
     /// Validate that `max_tokens` is within the Anthropic API range (1..=128,000).
@@ -116,6 +132,7 @@ impl LlmProvider for AnthropicProvider {
                 role: "user",
                 content: prompt,
             }],
+            system: self.system_prompt.as_deref(),
         };
 
         let url = format!("{}/v1/messages", self.base_url);
@@ -173,6 +190,7 @@ mod tests {
                 role: "user",
                 content: "hello",
             }],
+            system: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("claude-sonnet"));
@@ -208,7 +226,8 @@ mod tests {
     // --- HTTP mocking tests ---
 
     fn provider_for(server: &MockServer) -> AnthropicProvider {
-        AnthropicProvider::with_base_url(&server.uri(), "test-key", "test-model", 1024)
+        AnthropicProvider::with_base_url(&server.uri(), "test-key", "test-model", 1024, None)
+            .expect("failed to build test provider")
     }
 
     #[tokio::test]

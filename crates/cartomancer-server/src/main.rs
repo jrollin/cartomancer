@@ -9,6 +9,7 @@ mod config;
 mod doctor;
 mod llm;
 mod opengrep;
+mod path_security;
 mod pipeline;
 mod webhook;
 
@@ -129,7 +130,7 @@ async fn cmd_review(
             )
         })?;
 
-    let github = GitHubClient::new(&token);
+    let github = GitHubClient::new(&token)?;
 
     // Run the pipeline
     let mut result =
@@ -340,7 +341,7 @@ async fn cmd_scan(
     // 3. Escalate severity
     let escalate_start = Instant::now();
     let escalator = SeverityEscalator::new(config.severity.blast_radius_threshold);
-    escalator.escalate_batch(&mut findings);
+    escalator.escalate_batch(&mut findings, &config.knowledge.rules);
     info!(
         elapsed_ms = escalate_start.elapsed().as_millis() as u64,
         "severity escalation complete"
@@ -351,15 +352,21 @@ async fn cmd_scan(
     // 4. LLM deepening (conditional)
     let llm_start = Instant::now();
     let threshold = config.severity.llm_deepening_threshold;
+    let rule_overrides = &config.knowledge.rules;
     let candidates: Vec<usize> = findings
         .iter()
         .enumerate()
         .filter(|(_, f)| {
-            f.severity >= threshold
-                && f.graph_context
-                    .as_ref()
-                    .map(|ctx| ctx.blast_radius > 3)
-                    .unwrap_or(false)
+            let always = rule_overrides
+                .get(&f.rule_id)
+                .map(|r| r.always_deepen)
+                .unwrap_or(false);
+            always
+                || (f.severity >= threshold
+                    && f.graph_context
+                        .as_ref()
+                        .map(|ctx| ctx.blast_radius > 3)
+                        .unwrap_or(false))
         })
         .map(|(i, _)| i)
         .collect();
@@ -370,7 +377,7 @@ async fn cmd_scan(
             "no findings qualify for LLM deepening"
         );
     } else {
-        match llm::create_provider(&config.llm) {
+        match llm::create_provider(&config.llm, config.knowledge.system_prompt.as_deref()) {
             Ok(provider) => {
                 info!(
                     provider = provider.name(),

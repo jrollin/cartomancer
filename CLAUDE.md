@@ -39,7 +39,9 @@ cartomancer-server (binary)
 - `ServeConfig` (core::config) — `max_concurrent_reviews` for webhook server
 - `StorageConfig` (core::config) — `db_path` for finding persistence
 - `LlmBackend` (core::config) — enum: Ollama or Anthropic (config selection)
-- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic; `AnthropicProvider::with_base_url` for test overrides
+- `KnowledgeConfig` (core::config) — knowledge file path, system prompt, max chars, per-rule overrides
+- `RuleOverride` (core::config) — per-rule min/max severity and always_deepen flag
+- `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic and accepts optional system prompt; `AnthropicProvider::new`/`with_base_url` return `Result`
 - `PrMetadata` (github::types) — PR head/base SHA, refs, title from GitHub API
 - `ReviewComment` (github::types) — inline comment for PR Review API
 - `CartogEnricher` (graph::enricher) — wraps cartog::db::Database
@@ -69,10 +71,10 @@ cartomancer doctor [--format text|json]           # check dependencies and confi
 2. Fetch PR metadata (GitHub API → head SHA, base SHA)
 3. Prepare work dir (clone to temp dir, or reuse `--work-dir`)
 4. Fetch + parse unified diff (GitHub API → `PullRequestDiff`)
-5. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns from config)
+5. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns, auto-discovered custom rules from `rules_dir`)
 6. Enrich with cartog (impact, refs, callers, domain detection)
-7. Escalate severity (blast radius thresholds + domain tags)
-8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3) — analysis + suggested fix + agent prompt
+7. Escalate severity (blast radius thresholds + domain tags + per-rule `min_severity`/`max_severity` overrides)
+8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3, or `always_deepen` rule override) — loads company knowledge file, injects context + system prompt — analysis + suggested fix + agent prompt
 9. Regression check (compare fingerprints against base branch baseline)
 10. Dismiss filter (remove dismissed findings by fingerprint)
 11. Persist scan (write to `.cartomancer.db`, best-effort)
@@ -82,7 +84,7 @@ cartomancer doctor [--format text|json]           # check dependencies and confi
 
 ## External Dependencies
 
-- **Opengrep**: must be in PATH, invoked as subprocess. Supports opengrep-specific flags: `--taint-intrafile`, `--opengrep-ignore-pattern`, `--output-enclosing-context`, `--dynamic-timeout`
+- **Opengrep**: must be in PATH, invoked as subprocess. Supports opengrep-specific flags: `--taint-intrafile`, `--opengrep-ignore-pattern`, `--output-enclosing-context`, `--dynamic-timeout`. Custom rules auto-discovered from `.cartomancer/rules/` (configurable via `opengrep.rules_dir`)
 - **Ollama**: optional, local LLM at `http://localhost:11434/api/chat`
 - **Anthropic API**: optional, production LLM at `https://api.anthropic.com/v1/messages`
 - **cartog**: compiled in as Rust crate, SQLite-based code graph

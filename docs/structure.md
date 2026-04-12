@@ -6,6 +6,9 @@
 cartomancer/
 ├── Cargo.toml                          # workspace root
 ├── .cartomancer.toml                   # example config
+├── .cartomancer/                       # per-project customization (optional)
+│   ├── rules/                          # custom opengrep YAML rules (auto-discovered)
+│   └── knowledge.md                    # company context for LLM deepening
 ├── LICENSE                             # MIT license
 ├── deny.toml                           # cargo-deny policy
 ├── rustfmt.toml                        # format config
@@ -56,10 +59,11 @@ cartomancer/
 │       │   ├── comment.rs             # format_inline_comment, format_off_diff_comment, format_summary, classify_finding
 │       │   ├── config.rs
 │       │   ├── pipeline.rs            # run_pipeline, persist_scan, annotate_regression, filter_dismissed
-│       │   ├── opengrep.rs
+│       │   ├── opengrep.rs            # run_opengrep, discover_custom_rules
+│       │   ├── path_security.rs       # validate_path_within (path traversal protection)
 │       │   ├── webhook.rs
 │       │   └── llm/
-│       │       ├── mod.rs              # LlmProvider trait, parse_llm_response, build_agent_prompt
+│       │       ├── mod.rs              # LlmProvider trait, load_knowledge, build_deepening_prompt
 │       │       ├── ollama.rs           # local dev
 │       │       └── anthropic.rs        # production
 │       └── tests/

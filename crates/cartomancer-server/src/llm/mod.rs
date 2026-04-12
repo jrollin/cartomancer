@@ -7,11 +7,16 @@
 pub mod anthropic;
 pub mod ollama;
 
+use std::path::Path;
+
 use anyhow::Result;
 use async_trait::async_trait;
+use tracing::warn;
 
-use cartomancer_core::config::LlmConfig;
+use cartomancer_core::config::{KnowledgeConfig, LlmConfig};
 use cartomancer_core::finding::Finding;
+
+use crate::path_security::validate_path_within;
 
 /// Trait for LLM providers that can deepen findings with analysis.
 #[async_trait]
@@ -28,7 +33,7 @@ pub trait LlmProvider: Send + Sync {
 
     /// Deepen a finding by generating LLM analysis from its context.
     async fn deepen(&self, finding: &mut Finding) -> Result<()> {
-        let prompt = build_deepening_prompt(finding);
+        let prompt = build_deepening_prompt(finding, "");
         let raw = self.complete(&prompt).await?;
         let (analysis, fix) = parse_llm_response(&raw);
         finding.llm_analysis = Some(analysis);
@@ -41,7 +46,13 @@ pub trait LlmProvider: Send + Sync {
 }
 
 /// Create a provider from configuration.
-pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
+///
+/// When `system_prompt` is provided, it is passed to the provider and used as the
+/// system-level message in LLM requests.
+pub fn create_provider(
+    config: &LlmConfig,
+    system_prompt: Option<&str>,
+) -> Result<Box<dyn LlmProvider>> {
     match config.provider {
         cartomancer_core::config::LlmBackend::Ollama => {
             let base_url = config
@@ -49,7 +60,11 @@ pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
                 .as_deref()
                 .unwrap_or("http://localhost:11434");
             let model = config.ollama_model.as_deref().unwrap_or("gemma4");
-            Ok(Box::new(ollama::OllamaProvider::new(base_url, model)))
+            Ok(Box::new(ollama::OllamaProvider::new(
+                base_url,
+                model,
+                system_prompt.map(|s| s.to_string()),
+            )))
         }
         cartomancer_core::config::LlmBackend::Anthropic => {
             anthropic::AnthropicProvider::validate_max_tokens(config.max_tokens)?;
@@ -66,17 +81,65 @@ pub fn create_provider(config: &LlmConfig) -> Result<Box<dyn LlmProvider>> {
                 .anthropic_model
                 .as_deref()
                 .unwrap_or("claude-sonnet-4-20250514");
-            Ok(Box::new(anthropic::AnthropicProvider::new(
+            let provider = anthropic::AnthropicProvider::new(
                 &api_key,
                 model,
                 config.max_tokens,
-            )))
+                system_prompt.map(|s| s.to_string()),
+            )?;
+            Ok(Box::new(provider))
+        }
+    }
+}
+
+/// Load company knowledge from file. Returns empty string if file doesn't exist,
+/// path is invalid, or file is binary.
+///
+/// Security: validates the path stays within `work_dir` (blocks path traversal).
+pub fn load_knowledge(work_dir: &Path, config: &KnowledgeConfig) -> String {
+    let Some(ref path) = config.knowledge_file else {
+        return String::new();
+    };
+    if path.is_empty() {
+        return String::new();
+    }
+
+    // Path traversal check
+    let full_path = match validate_path_within(work_dir, path) {
+        Ok(p) => p,
+        Err(e) => {
+            warn!(path = %path, err = %e, "knowledge file path rejected");
+            return String::new();
+        }
+    };
+
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => {
+            // Binary file check: reject if null bytes in first 1024 bytes
+            if content.as_bytes().iter().take(1024).any(|&b| b == 0) {
+                warn!(path = %path, "knowledge file appears to be binary, skipping");
+                return String::new();
+            }
+
+            let max = config.max_knowledge_chars;
+            if content.chars().count() > max {
+                content.chars().take(max).collect::<String>()
+            } else {
+                content
+            }
+        }
+        Err(e) => {
+            warn!(path = %path, full_path = %full_path.display(), err = %e, "failed to read knowledge file");
+            String::new()
         }
     }
 }
 
 /// Build the deepening prompt for a finding with its graph context.
-pub fn build_deepening_prompt(finding: &Finding) -> String {
+///
+/// When `company_context` is non-empty, it is injected as a `## Company Context`
+/// section to give the LLM awareness of team conventions and architecture.
+pub fn build_deepening_prompt(finding: &Finding, company_context: &str) -> String {
     let mut prompt = format!(
         "Analyze this code finding and explain its impact.\n\n\
          ## Finding\n\
@@ -124,6 +187,10 @@ pub fn build_deepening_prompt(finding: &Finding) -> String {
         if !ctx.domain_tags.is_empty() {
             prompt.push_str(&format!("Domain: {}\n", ctx.domain_tags.join(", ")));
         }
+    }
+
+    if !company_context.is_empty() {
+        prompt.push_str(&format!("\n## Company Context\n{company_context}\n"));
     }
 
     prompt.push_str(
@@ -250,7 +317,7 @@ mod tests {
     #[test]
     fn build_prompt_includes_finding_details() {
         let f = make_finding();
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(prompt.contains("test.rule"));
         assert!(prompt.contains("test message"));
         assert!(prompt.contains("src/lib.rs:10"));
@@ -261,7 +328,7 @@ mod tests {
     fn build_prompt_with_enclosing_context() {
         let mut f = make_finding();
         f.enclosing_context = Some("fn handler() {\n    let x = dangerous();\n}".into());
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(prompt.contains("## Enclosing Function"));
         assert!(prompt.contains("fn handler()"));
     }
@@ -269,7 +336,7 @@ mod tests {
     #[test]
     fn build_prompt_without_enclosing_context() {
         let f = make_finding();
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(!prompt.contains("Enclosing Function"));
     }
 
@@ -278,7 +345,7 @@ mod tests {
         let mut f = make_finding();
         let long_ctx = "x".repeat(3000);
         f.enclosing_context = Some(long_ctx);
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(prompt.contains("[truncated]"));
         // The 2000-char prefix should be present
         assert!(prompt.contains(&"x".repeat(2000)));
@@ -367,7 +434,7 @@ mod tests {
         let ctx = "é".repeat(1500); // 3000 bytes, 1500 chars
         f.enclosing_context = Some(ctx);
         // Must not panic
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(prompt.contains("[truncated]"));
     }
 
@@ -379,7 +446,7 @@ mod tests {
         assert_eq!(ctx.len(), 2004);
         f.enclosing_context = Some(ctx);
         // Must not panic
-        let prompt = build_deepening_prompt(&f);
+        let prompt = build_deepening_prompt(&f, "");
         assert!(prompt.contains("[truncated]"));
         // Should contain exactly 500 emojis (2000 bytes)
         assert!(prompt.contains(&"🔥".repeat(500)));
@@ -435,7 +502,7 @@ mod tests {
             max_tokens: 0,
             ..Default::default()
         };
-        match create_provider(&config) {
+        match create_provider(&config, None) {
             Ok(_) => panic!("should reject max_tokens=0"),
             Err(e) => assert!(e.to_string().contains("must be between"), "{e}"),
         }
@@ -449,7 +516,7 @@ mod tests {
             max_tokens: 200_000,
             ..Default::default()
         };
-        match create_provider(&config) {
+        match create_provider(&config, None) {
             Ok(_) => panic!("should reject max_tokens=200000"),
             Err(e) => assert!(e.to_string().contains("must be between"), "{e}"),
         }
@@ -463,7 +530,7 @@ mod tests {
             max_tokens: 4096,
             ..Default::default()
         };
-        let provider = create_provider(&config).unwrap();
+        let provider = create_provider(&config, None).unwrap();
         assert_eq!(provider.name(), "anthropic");
     }
 
@@ -481,5 +548,118 @@ mod tests {
         );
         assert!(f.suggested_fix.is_none());
         assert!(f.agent_prompt.is_none());
+    }
+
+    #[test]
+    fn build_prompt_with_company_context() {
+        let f = make_finding();
+        let context = "We use SQLAlchemy ORM. Raw SQL is only in migrations.";
+        let prompt = build_deepening_prompt(&f, context);
+        assert!(prompt.contains("## Company Context"));
+        assert!(prompt.contains("SQLAlchemy ORM"));
+    }
+
+    #[test]
+    fn build_prompt_empty_company_context_omits_section() {
+        let f = make_finding();
+        let prompt = build_deepening_prompt(&f, "");
+        assert!(!prompt.contains("Company Context"));
+    }
+
+    #[test]
+    fn load_knowledge_missing_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = KnowledgeConfig {
+            knowledge_file: Some("nonexistent.md".into()),
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn load_knowledge_valid_file_returns_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let knowledge_path = tmp.path().join("knowledge.md");
+        std::fs::write(&knowledge_path, "# Our Standards\nNo raw SQL.").unwrap();
+
+        let config = KnowledgeConfig {
+            knowledge_file: Some("knowledge.md".into()),
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert_eq!(result, "# Our Standards\nNo raw SQL.");
+    }
+
+    #[test]
+    fn load_knowledge_truncates_at_max_chars() {
+        let tmp = tempfile::tempdir().unwrap();
+        let knowledge_path = tmp.path().join("big.md");
+        std::fs::write(&knowledge_path, "x".repeat(10000)).unwrap();
+
+        let config = KnowledgeConfig {
+            knowledge_file: Some("big.md".into()),
+            max_knowledge_chars: 100,
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert_eq!(result.chars().count(), 100);
+    }
+
+    #[test]
+    fn load_knowledge_truncates_multibyte_safely() {
+        let tmp = tempfile::tempdir().unwrap();
+        let knowledge_path = tmp.path().join("utf8.md");
+        // '\u{00e9}' is 2 bytes per char; 100 chars = 200 bytes
+        let content = "\u{00e9}".repeat(100);
+        std::fs::write(&knowledge_path, &content).unwrap();
+
+        let config = KnowledgeConfig {
+            knowledge_file: Some("utf8.md".into()),
+            max_knowledge_chars: 50,
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert_eq!(result.chars().count(), 50);
+        // Must be valid UTF-8 (would panic on String creation if not)
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn load_knowledge_path_traversal_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = KnowledgeConfig {
+            knowledge_file: Some("../../etc/passwd".into()),
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn load_knowledge_binary_file_rejected() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin_path = tmp.path().join("binary.dat");
+        let mut content = vec![0u8; 512];
+        content.extend_from_slice(b"some text after nulls");
+        std::fs::write(&bin_path, &content).unwrap();
+
+        let config = KnowledgeConfig {
+            knowledge_file: Some("binary.dat".into()),
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn load_knowledge_none_file_returns_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = KnowledgeConfig {
+            knowledge_file: None,
+            ..Default::default()
+        };
+        let result = load_knowledge(tmp.path(), &config);
+        assert!(result.is_empty());
     }
 }

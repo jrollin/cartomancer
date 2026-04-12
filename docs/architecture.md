@@ -55,11 +55,11 @@ Vec<Finding> (new findings only, from diff)
   ▼ CartogEnricher.enrich() per finding
 Vec<Finding> (with GraphContext: blast_radius, callers, domain_tags, is_public_api)
   │
-  ▼ SeverityEscalator.escalate_batch()
-Vec<Finding> (severity adjusted based on graph context)
+  ▼ SeverityEscalator.escalate_batch(rule_overrides)
+Vec<Finding> (severity adjusted: graph context + per-rule min_severity/max_severity overrides)
   │
-  ▼ LlmProvider.deepen() — only if severity >= threshold AND blast_radius > 3
-Vec<Finding> (with llm_analysis, suggested_fix from ```diff fence, agent_prompt)
+  ▼ LlmProvider.deepen() — when severity >= threshold AND blast_radius > 3, OR always_deepen=true
+Vec<Finding> (with llm_analysis, suggested_fix from ```diff fence, agent_prompt; company knowledge injected)
   │
   ▼ Build ReviewResult + format comments
 ReviewResult { findings, summary, head_sha }
@@ -92,6 +92,10 @@ Vec<Finding> (dismissed findings removed)
 | any | < threshold | none | < 10 | unchanged |
 
 Default `blast_radius_threshold` = 5 (configurable in `.cartomancer.toml`).
+
+Per-rule overrides from `[knowledge.rules]` are applied around the matrix above:
+- `min_severity` is applied as a floor **before** graph-based escalation
+- `max_severity` is applied as a ceiling **after** all escalation
 
 ## LLM Provider Architecture
 
@@ -169,11 +173,11 @@ CLI ──parse args──▶ cmd_review()
                       │       ├── db.refs()      → callers
                       │       └── detect_domain_tags() (symbol + callers)
                       │
-                      ├─▶ SeverityEscalator.escalate_batch()
-                      │       └── threshold checks → severity upgrade
+                      ├─▶ SeverityEscalator.escalate_batch(rule_overrides)
+                      │       └── threshold checks + per-rule min/max severity → severity upgrade
                       │
-                      ├─▶ LlmProvider.deepen() (conditional)
-                      │       └── POST /api/chat or /v1/messages
+                      ├─▶ LlmProvider.deepen() (when gates pass OR always_deepen)
+                      │       └── load knowledge file → build prompt → POST /api/chat or /v1/messages
                       │
                       └─▶ PipelineResult { review, diff, branch, base_branch, scan_duration, rule_count, temp_dir }
                       │
@@ -276,10 +280,35 @@ pending → scanned → enriched → escalated → deepened → completed
 
 Each stage writes findings to the store and advances the `stage` column. On failure, the scan is marked `failed` with an error message. The `--resume <scan-id>` flag on the `review` command allows restarting from the last completed stage.
 
+## Custom Rules & Knowledge Base
+
+### Custom OpenGrep Rules
+
+Teams can place custom YAML rule files in `.cartomancer/rules/` (configurable via `opengrep.rules_dir`). These are auto-discovered and passed to opengrep alongside built-in rules via `--config <dir>`.
+
+- Rules encode team-specific business rules and coding conventions
+- Directory is validated against path traversal before use
+- `cartomancer doctor` reports the number of discovered rule files
+- Missing directory is silently ignored (default rules only)
+
+### Company Knowledge Base
+
+A markdown/text file (default: `.cartomancer/knowledge.md`) loaded once and injected into every LLM deepening prompt as a `## Company Context` section. Gives the LLM awareness of team conventions, architecture, and security policies.
+
+Additionally, a `system_prompt` field in `[knowledge]` config provides a short directive system message for the LLM (e.g. "You are reviewing a fintech codebase").
+
+**Security**: knowledge file path is validated against path traversal. Binary files (containing null bytes) are rejected. Content is truncated at `max_knowledge_chars` (default: 8000).
+
+### Per-Rule Severity Overrides
+
+The `[knowledge.rules]` section in `.cartomancer.toml` allows per-rule:
+- `min_severity`: severity floor (findings below this get upgraded)
+- `max_severity`: severity ceiling (findings above this get capped)
+- `always_deepen`: bypass severity/blast_radius gates for LLM deepening
+
 ## Future Extensions
 
 - Multiple LLM providers (OpenAI, local models via LM Studio)
-- Custom rule YAML alongside opengrep
 - GitLab / Bitbucket support
 - Slack/Teams notifications for Critical findings
 - Dashboard / web UI for trend visualization over stored scan history
