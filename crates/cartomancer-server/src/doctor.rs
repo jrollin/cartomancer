@@ -83,6 +83,8 @@ pub async fn run_checks(config: &AppConfig) -> Vec<CheckResult> {
 
     results.push(check_config(config));
     results.push(check_opengrep().await);
+    results.push(check_custom_rules(config));
+    results.push(check_knowledge(config));
     results.push(check_cartog());
     results.push(check_github_token(config));
     results.push(check_llm_provider(config).await);
@@ -140,6 +142,99 @@ pub fn print_json(results: &[CheckResult]) -> Result<()> {
 }
 
 // --- Individual checks ---
+
+/// Check custom rules directory (if configured).
+fn check_custom_rules(config: &AppConfig) -> CheckResult {
+    let Some(ref rules_dir) = config.opengrep.rules_dir else {
+        return CheckResult::ok("custom-rules", "disabled (rules_dir not set)");
+    };
+    if rules_dir.is_empty() {
+        return CheckResult::ok("custom-rules", "disabled (rules_dir is empty)");
+    }
+
+    // Use current directory as base for path validation
+    let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    match crate::path_security::validate_path_within(&base, rules_dir) {
+        Err(e) => CheckResult::fail("custom-rules", format!("path rejected: {e}")),
+        Ok(validated) => {
+            if !validated.is_dir() {
+                return CheckResult::ok(
+                    "custom-rules",
+                    format!("{rules_dir} not found (default rules only)"),
+                );
+            }
+
+            let yaml_count = std::fs::read_dir(&validated)
+                .map(|entries| {
+                    entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.path()
+                                .extension()
+                                .map(|ext| ext == "yaml" || ext == "yml")
+                                .unwrap_or(false)
+                        })
+                        .count()
+                })
+                .unwrap_or(0);
+
+            if yaml_count == 0 {
+                CheckResult::warn(
+                    "custom-rules",
+                    format!("{rules_dir} exists but contains no .yaml/.yml files"),
+                )
+            } else {
+                CheckResult::ok(
+                    "custom-rules",
+                    format!("{yaml_count} rule file(s) in {rules_dir}"),
+                )
+            }
+        }
+    }
+}
+
+/// Check knowledge file for LLM deepening (if configured).
+fn check_knowledge(config: &AppConfig) -> CheckResult {
+    let Some(ref knowledge_file) = config.knowledge.knowledge_file else {
+        return CheckResult::ok("knowledge", "disabled (no knowledge_file)");
+    };
+    if knowledge_file.is_empty() {
+        return CheckResult::ok("knowledge", "disabled (knowledge_file is empty)");
+    }
+
+    let base = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    match crate::path_security::validate_path_within(&base, knowledge_file) {
+        Err(e) => CheckResult::fail("knowledge", format!("path rejected: {e}")),
+        Ok(validated) => {
+            if !validated.exists() {
+                return CheckResult::ok(
+                    "knowledge",
+                    format!("{knowledge_file} not found (default prompts only)"),
+                );
+            }
+
+            match std::fs::metadata(&validated) {
+                Ok(meta) => {
+                    let size = meta.len() as usize;
+                    let max = config.knowledge.max_knowledge_chars;
+                    if size > max {
+                        CheckResult::warn(
+                            "knowledge",
+                            format!(
+                                "{knowledge_file} ({size} bytes) exceeds max_knowledge_chars ({max}), will be truncated"
+                            ),
+                        )
+                    } else {
+                        CheckResult::ok("knowledge", format!("{knowledge_file} ({size} bytes)"))
+                    }
+                }
+                Err(e) => {
+                    CheckResult::warn("knowledge", format!("cannot read {knowledge_file}: {e}"))
+                }
+            }
+        }
+    }
+}
 
 /// Validate the loaded configuration via `AppConfig::validate()`.
 fn check_config(config: &AppConfig) -> CheckResult {
@@ -269,7 +364,7 @@ fn check_cartog() -> CheckResult {
 /// Create the configured LLM provider and run its health check.
 async fn check_llm_provider(config: &AppConfig) -> CheckResult {
     let provider_name = format!("{:?}", config.llm.provider).to_lowercase();
-    match crate::llm::create_provider(&config.llm) {
+    match crate::llm::create_provider(&config.llm, config.knowledge.system_prompt.as_deref()) {
         Ok(provider) => match provider.health_check().await {
             Ok(()) => CheckResult::ok("llm-provider", format!("{} reachable", provider_name)),
             Err(e) => CheckResult::warn(

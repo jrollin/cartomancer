@@ -12,6 +12,21 @@ timeout_seconds = 120
 # dynamic_timeout = false       # file-size-scaled timeouts instead of flat timeout_seconds
 # dynamic_timeout_unit_kb = 10  # base timeout unit in KB (only when dynamic_timeout = true)
 # dynamic_timeout_max_multiplier = 5.0  # max multiplier (only when dynamic_timeout = true)
+# rules_dir = ".cartomancer/rules"  # auto-discover custom YAML rules (default)
+
+[knowledge]
+# knowledge_file = ".cartomancer/knowledge.md"  # company context for LLM deepening (default)
+# system_prompt = "You are reviewing a fintech codebase. Prioritize payment flow findings."
+# max_knowledge_chars = 8000  # truncation limit for knowledge file (default)
+
+# Per-rule severity overrides (uncomment and customize):
+# [knowledge.rules."generic.security.hardcoded-secret"]
+# min_severity = "critical"
+# always_deepen = true
+#
+# [knowledge.rules."company.no-unwrap-in-production"]
+# min_severity = "warning"
+# always_deepen = true
 
 [llm]
 provider = "ollama"

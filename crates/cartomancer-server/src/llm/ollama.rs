@@ -12,6 +12,7 @@ pub struct OllamaProvider {
     http: reqwest::Client,
     base_url: String,
     model: String,
+    system_prompt: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -38,7 +39,7 @@ struct ResponseMessage {
 }
 
 impl OllamaProvider {
-    pub fn new(base_url: &str, model: &str) -> Self {
+    pub fn new(base_url: &str, model: &str, system_prompt: Option<String>) -> Self {
         Self {
             http: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(300))
@@ -46,6 +47,7 @@ impl OllamaProvider {
                 .expect("failed to build HTTP client"),
             base_url: base_url.trim_end_matches('/').to_string(),
             model: model.to_string(),
+            system_prompt,
         }
     }
 }
@@ -101,12 +103,21 @@ impl LlmProvider for OllamaProvider {
     }
 
     async fn complete(&self, prompt: &str) -> Result<String> {
+        let mut messages = Vec::new();
+        if let Some(ref sys) = self.system_prompt {
+            messages.push(Message {
+                role: "system",
+                content: sys,
+            });
+        }
+        messages.push(Message {
+            role: "user",
+            content: prompt,
+        });
+
         let body = ChatRequest {
             model: &self.model,
-            messages: vec![Message {
-                role: "user",
-                content: prompt,
-            }],
+            messages,
             stream: false,
         };
 
@@ -162,7 +173,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         provider.health_check().await.unwrap();
     }
 
@@ -177,7 +188,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         provider.health_check().await.unwrap();
     }
 
@@ -193,7 +204,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         let err = provider.health_check().await.unwrap_err();
         assert!(err.to_string().contains("not found"));
         assert!(err.to_string().contains("ollama pull gemma4"));
@@ -208,7 +219,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         let err = provider.health_check().await.unwrap_err();
         assert!(err.to_string().contains("health check failed"));
     }
@@ -224,7 +235,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         let result = provider.complete("analyze this").await.unwrap();
         assert_eq!(result, "This is a security issue.");
     }
@@ -238,7 +249,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         let err = provider.complete("test").await.unwrap_err();
         assert!(err.to_string().contains("error"));
     }
@@ -259,8 +270,35 @@ mod tests {
             .mount(&server)
             .await;
 
-        let provider = OllamaProvider::new(&server.uri(), "gemma4");
+        let provider = OllamaProvider::new(&server.uri(), "gemma4", None);
         let result = provider.complete("test").await.unwrap();
+        assert_eq!(result, "ok");
+    }
+
+    #[tokio::test]
+    async fn complete_includes_system_message_when_set() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .and(wiremock::matchers::body_partial_json(serde_json::json!({
+                "messages": [
+                    {"role": "system", "content": "You review fintech code."},
+                    {"role": "user", "content": "analyze this"}
+                ]
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(r#"{"message":{"role":"assistant","content":"ok"}}"#),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = OllamaProvider::new(
+            &server.uri(),
+            "gemma4",
+            Some("You review fintech code.".into()),
+        );
+        let result = provider.complete("analyze this").await.unwrap();
         assert_eq!(result, "ok");
     }
 }

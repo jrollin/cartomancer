@@ -114,7 +114,7 @@ pub async fn run_pipeline(
     };
 
     // 0. LLM health check — warn early if provider is unreachable
-    match llm::create_provider(&config.llm) {
+    match llm::create_provider(&config.llm, config.knowledge.system_prompt.as_deref()) {
         Ok(provider) => match provider.health_check().await {
             Ok(()) => info!(provider = provider.name(), "LLM provider ready"),
             Err(e) => {
@@ -271,7 +271,7 @@ pub async fn run_pipeline(
     // --- Stage: Escalate ---
     if start_stage < PipelineStage::Escalated {
         let escalator = SeverityEscalator::new(config.severity.blast_radius_threshold);
-        escalator.escalate_batch(&mut findings);
+        escalator.escalate_batch(&mut findings, &config.knowledge.rules);
         advance_stage(&store, scan_id, "escalated", &findings);
     } else {
         info!(stage = "escalated", "skipping (already completed)");
@@ -279,7 +279,7 @@ pub async fn run_pipeline(
 
     // --- Stage: Deepen ---
     if start_stage < PipelineStage::Deepened {
-        deepen_findings(config, &mut findings).await;
+        deepen_findings(config, &work_path, &mut findings).await;
         advance_stage(&store, scan_id, "deepened", &findings);
     } else {
         info!(stage = "deepened", "skipping (already completed)");
@@ -535,17 +535,24 @@ fn enrich_findings(work_path: &Path, config: &AppConfig, findings: &mut [Finding
 }
 
 /// LLM-deepen qualifying findings with bounded concurrency.
-async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
+async fn deepen_findings(config: &AppConfig, work_path: &Path, findings: &mut [Finding]) {
     let threshold = config.severity.llm_deepening_threshold;
+    let rule_overrides = &config.knowledge.rules;
     let candidates: Vec<usize> = findings
         .iter()
         .enumerate()
         .filter(|(_, f)| {
-            f.severity >= threshold
-                && f.graph_context
-                    .as_ref()
-                    .map(|ctx| ctx.blast_radius > 3)
-                    .unwrap_or(false)
+            // Check if this rule has always_deepen override
+            let always = rule_overrides
+                .get(&f.rule_id)
+                .map(|r| r.always_deepen)
+                .unwrap_or(false);
+            always
+                || (f.severity >= threshold
+                    && f.graph_context
+                        .as_ref()
+                        .map(|ctx| ctx.blast_radius > 3)
+                        .unwrap_or(false))
         })
         .map(|(i, _)| i)
         .collect();
@@ -555,13 +562,14 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
         return;
     }
 
-    let provider: Arc<dyn llm::LlmProvider> = match llm::create_provider(&config.llm) {
-        Ok(p) => Arc::from(p),
-        Err(e) => {
-            warn!(err = %e, "could not create LLM provider, skipping deepening");
-            return;
-        }
-    };
+    let provider: Arc<dyn llm::LlmProvider> =
+        match llm::create_provider(&config.llm, config.knowledge.system_prompt.as_deref()) {
+            Ok(p) => Arc::from(p),
+            Err(e) => {
+                warn!(err = %e, "could not create LLM provider, skipping deepening");
+                return;
+            }
+        };
 
     let concurrency = config.llm.max_concurrent_deepening;
     info!(
@@ -571,10 +579,24 @@ async fn deepen_findings(config: &AppConfig, findings: &mut [Finding]) {
         "starting LLM deepening"
     );
 
+    // Load company knowledge once (used in every prompt)
+    let company_context = llm::load_knowledge(work_path, &config.knowledge);
+    if !company_context.is_empty() {
+        info!(
+            chars = company_context.len(),
+            "loaded company knowledge for LLM deepening"
+        );
+    }
+
     // Build prompts upfront (cheap, no async needed)
     let tasks: Vec<(usize, String)> = candidates
         .iter()
-        .map(|&idx| (idx, llm::build_deepening_prompt(&findings[idx])))
+        .map(|&idx| {
+            (
+                idx,
+                llm::build_deepening_prompt(&findings[idx], &company_context),
+            )
+        })
         .collect();
 
     // Fire concurrent LLM requests with bounded concurrency

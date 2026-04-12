@@ -25,7 +25,7 @@ Rust (single binary, performance, native cartog integration).
 
 | Tool | Integration | Required |
 |------|------------|----------|
-| Opengrep | Subprocess (`opengrep scan --json`). Opt-in features: `--taint-intrafile`, `--output-enclosing-context`, `--dynamic-timeout`, `--opengrep-ignore-pattern` | Yes (must be in PATH) |
+| Opengrep | Subprocess (`opengrep scan --json`). Opt-in features: `--taint-intrafile`, `--output-enclosing-context`, `--dynamic-timeout`, `--opengrep-ignore-pattern`. Custom rules auto-discovered from `.cartomancer/rules/` | Yes (must be in PATH) |
 | Ollama | HTTP API (`/api/chat`) | Optional (default LLM for local dev) |
 | Anthropic API | HTTP API (`/v1/messages`) | Optional (production LLM) |
 | cartog | Rust crate (compiled in) | Built-in |
@@ -37,7 +37,7 @@ Rust (single binary, performance, native cartog integration).
 | Subprocess for opengrep | Opengrep is a mature binary; FFI would be fragile and unnecessary |
 | Raw reqwest for GitHub API | Avoids octocrab dependency; GitHub REST API is simple enough |
 | cartog from crates.io | Native Rust integration, no subprocess overhead for graph queries |
-| LLM provider trait | Supports local Ollama for testing, Anthropic for production; response parsed for analysis + suggested fix |
+| LLM provider trait | Supports local Ollama for testing, Anthropic for production; response parsed for analysis + suggested fix; optional system prompt from config |
 | rusqlite directly (no ORM) | Simple schema (4 tables), fast enough synchronous, already a transitive dep via cartog |
 | PRAGMA user_version for schema migrations | Built-in SQLite integer, no extra migration table for a single-user embedded DB |
 | axum for webhook | Lightweight, tokio-native, matches cartog conventions |
@@ -61,6 +61,12 @@ opt-level = 1  # tree-sitter C grammars via cartog compile slowly at level 0
 - Single binary deployment
 - Opengrep must be installed separately (not bundled)
 - Air-gap capable: cartog runs fully offline, only LLM calls require network
+
+## Security
+
+- **Path traversal protection**: user-supplied paths in config (`rules_dir`, `knowledge_file`) are validated to stay within the project directory. Symlinks, `../` escapes, and absolute paths outside the project are rejected.
+- **Binary file detection**: knowledge files are checked for null bytes and rejected if they appear binary.
+- **Prompt size bounds**: `max_knowledge_chars` limits the amount of knowledge file content injected into LLM prompts (default: 8000).
 
 ## Security Considerations
 

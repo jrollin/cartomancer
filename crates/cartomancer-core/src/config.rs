@@ -1,5 +1,7 @@
 //! Application configuration types.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::severity::Severity;
@@ -19,6 +21,8 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     #[serde(default)]
     pub serve: ServeConfig,
+    #[serde(default)]
+    pub knowledge: KnowledgeConfig,
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -73,6 +77,10 @@ pub struct OpengrepConfig {
     /// Maximum multiplier for dynamic timeout.
     #[serde(default)]
     pub dynamic_timeout_max_multiplier: Option<f32>,
+    /// Directory of custom YAML rules to auto-discover and pass to opengrep.
+    /// Relative to the scanned directory. Set to empty string to disable.
+    #[serde(default = "default_rules_dir")]
+    pub rules_dir: Option<String>,
 }
 
 impl Default for OpengrepConfig {
@@ -88,8 +96,13 @@ impl Default for OpengrepConfig {
             dynamic_timeout: false,
             dynamic_timeout_unit_kb: None,
             dynamic_timeout_max_multiplier: None,
+            rules_dir: default_rules_dir(),
         }
     }
+}
+
+fn default_rules_dir() -> Option<String> {
+    Some(".cartomancer/rules".into())
 }
 
 fn default_opengrep_rules() -> Vec<String> {
@@ -224,6 +237,62 @@ fn default_max_concurrent_reviews() -> usize {
     4
 }
 
+/// Custom knowledge base for LLM deepening and rule overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KnowledgeConfig {
+    /// Path to a markdown/text file with company context (architecture, conventions,
+    /// security policies). Loaded once and injected into every LLM deepening prompt.
+    /// Relative paths resolved from the scanned directory.
+    #[serde(default = "default_knowledge_file")]
+    pub knowledge_file: Option<String>,
+
+    /// Custom system prompt for the LLM deepening calls.
+    /// Prepended as system-level context for short, directive guidance.
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+
+    /// Maximum characters to include from the knowledge file.
+    #[serde(default = "default_max_knowledge_chars")]
+    pub max_knowledge_chars: usize,
+
+    /// Per-rule severity overrides and deepening control.
+    #[serde(default)]
+    pub rules: HashMap<String, RuleOverride>,
+}
+
+impl Default for KnowledgeConfig {
+    fn default() -> Self {
+        Self {
+            knowledge_file: default_knowledge_file(),
+            system_prompt: None,
+            max_knowledge_chars: default_max_knowledge_chars(),
+            rules: HashMap::new(),
+        }
+    }
+}
+
+/// Per-rule severity and deepening overrides.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleOverride {
+    /// Minimum severity floor (findings below this get upgraded).
+    #[serde(default)]
+    pub min_severity: Option<Severity>,
+    /// Maximum severity ceiling (findings above this get capped).
+    #[serde(default)]
+    pub max_severity: Option<Severity>,
+    /// Always send to LLM deepening, bypassing severity/blast_radius gates.
+    #[serde(default)]
+    pub always_deepen: bool,
+}
+
+fn default_knowledge_file() -> Option<String> {
+    Some(".cartomancer/knowledge.md".into())
+}
+
+fn default_max_knowledge_chars() -> usize {
+    8000
+}
+
 fn default_blast_threshold() -> u32 {
     5
 }
@@ -240,35 +309,35 @@ impl AppConfig {
     /// Validate semantic constraints that serde cannot enforce.
     /// Collects all errors before returning, so the user sees everything at once.
     pub fn validate(&self) -> Result<(), String> {
-        let mut errors = Vec::<&str>::new();
+        let mut errors = Vec::<String>::new();
 
         if self.opengrep.rules.is_empty() {
-            errors.push("opengrep.rules must not be empty");
+            errors.push("opengrep.rules must not be empty".into());
         }
         if self.opengrep.timeout_seconds == 0 {
-            errors.push("opengrep.timeout_seconds must be > 0");
+            errors.push("opengrep.timeout_seconds must be > 0".into());
         }
         if let Some(mult) = self.opengrep.dynamic_timeout_max_multiplier {
             if mult <= 0.0 {
-                errors.push("opengrep.dynamic_timeout_max_multiplier must be > 0.0");
+                errors.push("opengrep.dynamic_timeout_max_multiplier must be > 0.0".into());
             }
         }
 
         if self.severity.blast_radius_threshold == 0 {
-            errors.push("severity.blast_radius_threshold must be > 0");
+            errors.push("severity.blast_radius_threshold must be > 0".into());
         }
         if self.severity.impact_depth == 0 || self.severity.impact_depth > 20 {
-            errors.push("severity.impact_depth must be between 1 and 20");
+            errors.push("severity.impact_depth must be between 1 and 20".into());
         }
 
         if self.llm.max_tokens == 0 || self.llm.max_tokens > 128_000 {
-            errors.push("llm.max_tokens must be between 1 and 128000");
+            errors.push("llm.max_tokens must be between 1 and 128000".into());
         }
         if self.llm.max_concurrent_deepening == 0 {
-            errors.push("llm.max_concurrent_deepening must be > 0");
+            errors.push("llm.max_concurrent_deepening must be > 0".into());
         }
         if self.serve.max_concurrent_reviews == 0 {
-            errors.push("serve.max_concurrent_reviews must be > 0");
+            errors.push("serve.max_concurrent_reviews must be > 0".into());
         }
 
         if matches!(self.llm.provider, LlmBackend::Anthropic) {
@@ -277,8 +346,24 @@ impl AppConfig {
             if !has_key {
                 errors.push(
                     "llm.anthropic_api_key required when provider is anthropic \
-                     (or set ANTHROPIC_API_KEY env var)",
+                     (or set ANTHROPIC_API_KEY env var)"
+                        .into(),
                 );
+            }
+        }
+
+        // Knowledge config validation
+        if self.knowledge.max_knowledge_chars == 0 {
+            errors.push("knowledge.max_knowledge_chars must be > 0".into());
+        }
+        for (rule_id, rule_override) in &self.knowledge.rules {
+            if let (Some(min), Some(max)) = (rule_override.min_severity, rule_override.max_severity)
+            {
+                if min > max {
+                    errors.push(format!(
+                        "knowledge.rules.{rule_id}: min_severity ({min}) must be <= max_severity ({max})"
+                    ));
+                }
             }
         }
 
@@ -318,11 +403,22 @@ mod tests {
         assert!(!config.opengrep.dynamic_timeout);
         assert!(config.opengrep.dynamic_timeout_unit_kb.is_none());
         assert!(config.opengrep.dynamic_timeout_max_multiplier.is_none());
+        assert_eq!(
+            config.opengrep.rules_dir.as_deref(),
+            Some(".cartomancer/rules")
+        );
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
         assert_eq!(config.llm.max_concurrent_deepening, 4);
         assert_eq!(config.storage.db_path, ".cartomancer.db");
+        assert_eq!(
+            config.knowledge.knowledge_file.as_deref(),
+            Some(".cartomancer/knowledge.md")
+        );
+        assert_eq!(config.knowledge.max_knowledge_chars, 8000);
+        assert!(config.knowledge.system_prompt.is_none());
+        assert!(config.knowledge.rules.is_empty());
     }
 
     #[test]
@@ -421,6 +517,78 @@ db_path = "/tmp/custom.db"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.storage.db_path, "/tmp/custom.db");
+    }
+
+    #[test]
+    fn deserialize_opengrep_rules_dir() {
+        let toml_str = r#"
+[opengrep]
+rules_dir = "my-rules/"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.opengrep.rules_dir.as_deref(), Some("my-rules/"));
+    }
+
+    #[test]
+    fn deserialize_opengrep_rules_dir_disabled() {
+        let toml_str = r#"
+[opengrep]
+rules_dir = ""
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.opengrep.rules_dir.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn deserialize_knowledge_config() {
+        let toml_str = r#"
+[knowledge]
+knowledge_file = "docs/context.md"
+system_prompt = "You review fintech code."
+max_knowledge_chars = 4000
+
+[knowledge.rules."python.security.sql-injection"]
+min_severity = "error"
+always_deepen = true
+
+[knowledge.rules."generic.hardcoded-secret"]
+min_severity = "critical"
+max_severity = "critical"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.knowledge.knowledge_file.as_deref(),
+            Some("docs/context.md")
+        );
+        assert_eq!(
+            config.knowledge.system_prompt.as_deref(),
+            Some("You review fintech code.")
+        );
+        assert_eq!(config.knowledge.max_knowledge_chars, 4000);
+        assert_eq!(config.knowledge.rules.len(), 2);
+
+        let sql_rule = &config.knowledge.rules["python.security.sql-injection"];
+        assert_eq!(sql_rule.min_severity, Some(Severity::Error));
+        assert!(sql_rule.always_deepen);
+        assert!(sql_rule.max_severity.is_none());
+
+        let secret_rule = &config.knowledge.rules["generic.hardcoded-secret"];
+        assert_eq!(secret_rule.min_severity, Some(Severity::Critical));
+        assert_eq!(secret_rule.max_severity, Some(Severity::Critical));
+        assert!(!secret_rule.always_deepen);
+    }
+
+    #[test]
+    fn deserialize_empty_knowledge_uses_defaults() {
+        let toml_str = "[knowledge]\n";
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.knowledge.knowledge_file.as_deref(),
+            Some(".cartomancer/knowledge.md")
+        );
+        assert_eq!(config.knowledge.max_knowledge_chars, 8000);
+        assert!(config.knowledge.system_prompt.is_none());
+        assert!(config.knowledge.rules.is_empty());
     }
 
     mod validate {
@@ -541,6 +709,49 @@ db_path = "/tmp/custom.db"
                 err.contains("max_concurrent_reviews must be > 0"),
                 "got: {err}"
             );
+        }
+
+        #[test]
+        fn zero_max_knowledge_chars_rejected() {
+            let mut config = AppConfig::default();
+            config.knowledge.max_knowledge_chars = 0;
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("max_knowledge_chars must be > 0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rule_override_min_greater_than_max_rejected() {
+            let mut config = AppConfig::default();
+            config.knowledge.rules.insert(
+                "test.rule".into(),
+                RuleOverride {
+                    min_severity: Some(Severity::Critical),
+                    max_severity: Some(Severity::Warning),
+                    always_deepen: false,
+                },
+            );
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("min_severity") && err.contains("max_severity"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rule_override_min_equals_max_accepted() {
+            let mut config = AppConfig::default();
+            config.knowledge.rules.insert(
+                "test.rule".into(),
+                RuleOverride {
+                    min_severity: Some(Severity::Error),
+                    max_severity: Some(Severity::Error),
+                    always_deepen: false,
+                },
+            );
+            assert!(config.validate().is_ok());
         }
 
         #[test]
