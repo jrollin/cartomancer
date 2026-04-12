@@ -1,3 +1,22 @@
+## [0.6.0] - 2026-04-12
+
+### 🚀 Features
+
+- Add custom opengrep rules and company knowledge base for LLM deepening
+
+### 🐛 Bug Fixes
+
+- *(store,github,llm)* Replace panicking constructors with Result, add integration tests
+- *(llm,test)* Log knowledge file read errors, use correct snippet_hash in test
+
+### 📚 Documentation
+
+- *(readme)* Add crates.io, docs.rs, and MSRV badges
+- *(readme)* Remove docs.rs badge
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.6.0
 ## [0.5.0] - 2026-04-11
 
 ### 🚀 Features
