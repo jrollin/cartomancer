@@ -34,7 +34,7 @@ cartomancer-server (binary)
 - `GraphContext` (core::finding) — blast radius, callers, domain tags from cartog
 - `Severity` (core::severity) — Info < Warning < Error < Critical
 - `ReviewResult` (core::review) — final output posted to GitHub
-- `PipelineStage` (core::review) — Pending → Scanned → Enriched → Escalated → Deepened → Completed / Failed
+- `PipelineStage` (core::review) — Pending → Prepared → Scanned → Enriched → Escalated → Deepened → Completed / Failed
 - `AppConfig` (core::config) — deserialized from `.cartomancer.toml`
 - `ServeConfig` (core::config) — `max_concurrent_reviews` for webhook server
 - `StorageConfig` (core::config) — `db_path` for finding persistence
@@ -44,7 +44,7 @@ cartomancer-server (binary)
 - `LlmProvider` (server::llm) — async trait with Ollama and Anthropic implementations; `create_provider` validates `max_tokens` (1..=128,000) for Anthropic and accepts optional system prompt; `AnthropicProvider::new`/`with_base_url` return `Result`
 - `PrMetadata` (github::types) — PR head/base SHA, refs, title from GitHub API
 - `ReviewComment` (github::types) — inline comment for PR Review API
-- `CartogEnricher` (graph::enricher) — wraps cartog::db::Database
+- `CartogEnricher` (graph::enricher) — wraps cartog::db::Database; `enrich_batch_optimized` deduplicates queries by file and symbol
 - `SeverityEscalator` (graph::escalator) — blast radius + domain → severity upgrade
 - `Store` (store::store) — SQLite persistence: scan/finding CRUD, dismissals, baselines
 - `ScanRecord` / `StoredFinding` / `Dismissal` (store::types) — persistence DTOs
@@ -69,25 +69,24 @@ cartomancer doctor [--format text|json]           # check dependencies and confi
 
 1. Resolve GitHub token (env `GITHUB_TOKEN` or config)
 2. Fetch PR metadata (GitHub API → head SHA, base SHA)
-3. Prepare work dir (clone to temp dir, or reuse `--work-dir`)
-4. Fetch + parse unified diff (GitHub API → `PullRequestDiff`)
-5. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns, auto-discovered custom rules from `rules_dir`)
-6. Enrich with cartog (impact, refs, callers, domain detection)
-7. Escalate severity (blast radius thresholds + domain tags + per-rule `min_severity`/`max_severity` overrides)
-8. LLM deepen (conditional: severity >= threshold AND blast_radius > 3, or `always_deepen` rule override) — loads company knowledge file, injects context + system prompt — analysis + suggested fix + agent prompt
-9. Regression check (compare fingerprints against base branch baseline)
-10. Dismiss filter (remove dismissed findings by fingerprint)
-11. Persist scan (write to `.cartomancer.db`, best-effort)
-12. Post review (categorized inline comments on diff lines, off-diff with caution banners, summary with actionable counts)
+3. Prepare work dir (clone to temp dir, or reuse `--work-dir`) + fetch/checkout PR commits + parse diff → **checkpoint: `prepared`** (persists work_dir path)
+4. Opengrep scan (subprocess with `--baseline-commit base_sha`, `--exclude` patterns, auto-discovered custom rules from `rules_dir`) → **checkpoint: `scanned`**
+5. Enrich with cartog (batch: outline per file, impact+refs per symbol, domain detection) → **checkpoint: `enriched`**
+6. Escalate severity (blast radius thresholds + domain tags + per-rule `min_severity`/`max_severity` overrides) → **checkpoint: `escalated`**
+7. LLM deepen (conditional: severity >= threshold AND blast_radius > 3, or `always_deepen` rule override) — loads company knowledge file, injects context + system prompt — analysis + suggested fix + agent prompt → **checkpoint: `deepened`**
+8. Regression check (compare fingerprints against base branch baseline)
+9. Dismiss filter (remove dismissed findings by fingerprint)
+10. Persist scan (write to `.cartomancer.db`, best-effort)
+11. Post review (categorized inline comments on diff lines, off-diff with caution banners, summary with actionable counts)
 
-`--dry-run` skips step 12, outputs ReviewResult to stdout.
+`--dry-run` skips step 11, outputs ReviewResult to stdout.
 
 ## External Dependencies
 
 - **Opengrep**: must be in PATH, invoked as subprocess. Supports opengrep-specific flags: `--taint-intrafile`, `--opengrep-ignore-pattern`, `--output-enclosing-context`, `--dynamic-timeout`. Custom rules auto-discovered from `.cartomancer/rules/` (configurable via `opengrep.rules_dir`)
 - **Ollama**: optional, local LLM at `http://localhost:11434/api/chat`
 - **Anthropic API**: optional, production LLM at `https://api.anthropic.com/v1/messages`
-- **cartog**: compiled in as Rust crate, SQLite-based code graph
+- **cartog**: compiled in as Rust crate, SQLite-based code graph (DB path configurable via `severity.cartog_db_path`, defaults to `.cartog.db`)
 
 ## Conventions
 

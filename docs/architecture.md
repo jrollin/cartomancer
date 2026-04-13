@@ -32,7 +32,8 @@ cartomancer doctor                             Check dependencies and config hea
 
 Stages 4-7 are shared between `scan` and `review` commands.
 Stages 8-9 are review-only. Stage 10 runs for both scan and review.
-Stages 4-7 persist findings to the store after each stage (schema v4) for resumability.
+
+Pipeline progress is persisted at coarse checkpoint stages, not after every numbered step. The checkpoints are: `prepared` (after steps 1-3: metadata + clone + diff), `scanned` (after step 4), `enriched` (after step 5), `escalated` (after step 6), `deepened` (after step 7), and `completed` (after step 11). `--resume` restarts from the last successful checkpoint. `--dry-run` skips step 11 (Post).
 
 ## Data Flow
 
@@ -52,7 +53,7 @@ PullRequestDiff { chunks: Vec<DiffChunk>, files_changed }
   ▼ opengrep::run_opengrep(--baseline-commit base_sha, --exclude patterns)
 Vec<Finding> (new findings only, from diff)
   │
-  ▼ CartogEnricher.enrich() per finding
+  ▼ CartogEnricher.enrich_batch_optimized() — deduped: outline per file, impact+refs per symbol
 Vec<Finding> (with GraphContext: blast_radius, callers, domain_tags, is_public_api)
   │
   ▼ SeverityEscalator.escalate_batch(rule_overrides)
@@ -167,11 +168,11 @@ CLI ──parse args──▶ cmd_review()
                       ├─▶ opengrep::run_opengrep(--baseline-commit, --exclude)
                       │       └── subprocess: opengrep scan --json
                       │
-                      ├─▶ CartogEnricher.enrich() per finding
-                      │       ├── db.outline()   → resolve symbol at line
-                      │       ├── db.impact()    → blast radius
-                      │       ├── db.refs()      → callers
-                      │       └── detect_domain_tags() (symbol + callers)
+                      ├─▶ CartogEnricher.enrich_batch_optimized()
+                      │       ├── db.outline() per unique file → resolve symbols
+                      │       ├── db.impact() per unique symbol → blast radius
+                      │       ├── db.refs() per unique symbol → callers
+                      │       └── detect_domain_tags() + distribute GraphContext
                       │
                       ├─▶ SeverityEscalator.escalate_batch(rule_overrides)
                       │       └── threshold checks + per-rule min/max severity → severity upgrade
@@ -225,7 +226,7 @@ All GET requests use single-retry with 1s delay on 5xx/network errors.
 
 Scan and review results are persisted to a SQLite database (`.cartomancer.db` by default, configurable via `storage.db_path` in `.cartomancer.toml`).
 
-**Schema** (3 tables, v4): `scans` (scan metadata + pipeline `stage` + `error_message`), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
+**Schema** (3 tables, v5): `scans` (scan metadata + pipeline `stage` + `error_message` + `work_dir`), `findings` (per-finding data with fingerprint, suggested_fix, agent_prompt), `dismissals` (false positive suppression). Schema version tracked via `PRAGMA user_version`.
 
 **Fingerprint**: SHA-256 of `rule_id:file_path:snippet_content`. Stable across scans — used for regression detection and dismissal matching. Line numbers excluded because they shift with unrelated edits.
 
@@ -242,7 +243,7 @@ Scan and review results are persisted to a SQLite database (`.cartomancer.db` by
 - **Sync** git clone/checkout (std::process::Command, blocking)
 - **Sync** cartog Database access (rusqlite is not Send; access from a single task)
 - **Sync** Store access (rusqlite, runs once after pipeline completes)
-- Findings enrichment runs sequentially per finding (cartog DB is single-connection)
+- Findings enrichment runs as a single batch: outline per file, impact+refs per symbol (deduplicated, single-connection)
 
 ## Error Handling Strategy
 
@@ -274,9 +275,11 @@ GET /health → 200 OK
 The pipeline persists progress to the `scans` table after each stage:
 
 ```text
-pending → scanned → enriched → escalated → deepened → completed
-                                                    ↘ failed
+pending → prepared → scanned → enriched → escalated → deepened → completed
+                                                               ↘ failed
 ```
+
+The `prepared` stage checkpoints after clone + checkout + diff fetch, before the opengrep scan. This allows `--resume` to skip the clone step when the scan crashes or times out during opengrep. The scan record also stores the `work_dir` path so resume can reuse the checkout.
 
 Each stage writes findings to the store and advances the `stage` column. On failure, the scan is marked `failed` with an error message. The `--resume <scan-id>` flag on the `review` command allows restarting from the last completed stage.
 

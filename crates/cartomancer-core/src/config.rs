@@ -186,6 +186,10 @@ pub struct SeverityConfig {
     pub llm_deepening_threshold: Severity,
     #[serde(default = "default_impact_depth")]
     pub impact_depth: u32,
+    /// Path to the cartog database. Relative paths resolved from the scanned directory.
+    /// Defaults to `.cartog.db`.
+    #[serde(default = "default_cartog_db_path")]
+    pub cartog_db_path: String,
 }
 
 impl Default for SeverityConfig {
@@ -194,8 +198,13 @@ impl Default for SeverityConfig {
             blast_radius_threshold: default_blast_threshold(),
             llm_deepening_threshold: default_llm_threshold(),
             impact_depth: default_impact_depth(),
+            cartog_db_path: default_cartog_db_path(),
         }
     }
+}
+
+fn default_cartog_db_path() -> String {
+    ".cartog.db".into()
 }
 
 /// Storage configuration for finding persistence.
@@ -329,6 +338,11 @@ impl AppConfig {
         if self.severity.impact_depth == 0 || self.severity.impact_depth > 20 {
             errors.push("severity.impact_depth must be between 1 and 20".into());
         }
+        if self.severity.cartog_db_path.is_empty() {
+            errors.push(
+                "severity.cartog_db_path must not be empty (defaults to \".cartog.db\")".into(),
+            );
+        }
 
         if self.llm.max_tokens == 0 || self.llm.max_tokens > 128_000 {
             errors.push("llm.max_tokens must be between 1 and 128000".into());
@@ -409,6 +423,7 @@ mod tests {
         );
         assert_eq!(config.severity.blast_radius_threshold, 5);
         assert_eq!(config.severity.impact_depth, 3);
+        assert_eq!(config.severity.cartog_db_path, ".cartog.db");
         assert!(matches!(config.llm.provider, LlmBackend::Ollama));
         assert_eq!(config.llm.max_concurrent_deepening, 4);
         assert_eq!(config.storage.db_path, ".cartomancer.db");
@@ -500,6 +515,22 @@ provider = "ollama"
 "#;
         let config: AppConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(config.llm.max_concurrent_deepening, 4);
+    }
+
+    #[test]
+    fn cartog_db_path_defaults() {
+        let config = AppConfig::default();
+        assert_eq!(config.severity.cartog_db_path, ".cartog.db");
+    }
+
+    #[test]
+    fn cartog_db_path_overridable() {
+        let toml_str = r#"
+[severity]
+cartog_db_path = "/data/my-project.cartog.db"
+"#;
+        let config: AppConfig = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.severity.cartog_db_path, "/data/my-project.cartog.db");
     }
 
     #[test]
@@ -674,6 +705,17 @@ max_severity = "critical"
             let err = config.validate().unwrap_err();
             assert!(
                 err.contains("max_concurrent_deepening must be > 0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn empty_cartog_db_path_rejected() {
+            let mut config = AppConfig::default();
+            config.severity.cartog_db_path = String::new();
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("cartog_db_path must not be empty"),
                 "got: {err}"
             );
         }

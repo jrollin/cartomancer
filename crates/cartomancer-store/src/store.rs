@@ -61,8 +61,8 @@ impl Store {
     /// Insert a scan record and return its ID.
     pub fn insert_scan(&self, scan: &ScanRecord) -> rusqlite::Result<i64> {
         self.conn.execute(
-            "INSERT INTO scans (repo, branch, commit_sha, command, pr_number, finding_count, summary, stage, error_message, failed_at_stage)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO scans (repo, branch, commit_sha, command, pr_number, finding_count, summary, stage, error_message, failed_at_stage, work_dir)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 scan.repo,
                 scan.branch,
@@ -74,6 +74,7 @@ impl Store {
                 scan.stage,
                 scan.error_message,
                 scan.failed_at_stage,
+                scan.work_dir,
             ],
         )?;
         Ok(self.conn.last_insert_rowid())
@@ -136,7 +137,7 @@ impl Store {
     /// List scans, optionally filtered, ordered by created_at descending.
     pub fn list_scans(&self, filter: &ScanFilter) -> rusqlite::Result<Vec<ScanRecord>> {
         let mut sql = String::from(
-            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage, work_dir
              FROM scans WHERE 1=1",
         );
         let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -168,6 +169,7 @@ impl Store {
                 stage: row.get(9)?,
                 error_message: row.get(10)?,
                 failed_at_stage: row.get(11)?,
+                work_dir: row.get(12)?,
             })
         })?;
 
@@ -259,7 +261,7 @@ impl Store {
         branch: &str,
     ) -> rusqlite::Result<Option<ScanRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage, work_dir
              FROM scans WHERE repo = ?1 AND branch = ?2 AND stage = 'completed'
              ORDER BY id DESC LIMIT 1",
         )?;
@@ -278,6 +280,7 @@ impl Store {
                 stage: row.get(9)?,
                 error_message: row.get(10)?,
                 failed_at_stage: row.get(11)?,
+                work_dir: row.get(12)?,
             })
         })?;
 
@@ -306,6 +309,15 @@ impl Store {
         let rows = stmt.query_map(params![scan_id], |row| row.get::<_, String>(0))?;
 
         rows.collect::<rusqlite::Result<HashSet<String>>>()
+    }
+
+    /// Update the work_dir path for a scan (called after successful clone).
+    pub fn update_scan_work_dir(&self, scan_id: i64, work_dir: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE scans SET work_dir = ?1 WHERE id = ?2",
+            params![work_dir, scan_id],
+        )?;
+        Ok(())
     }
 
     /// Update the pipeline stage for a scan.
@@ -399,7 +411,7 @@ impl Store {
     /// Get a single scan by ID.
     pub fn get_scan(&self, scan_id: i64) -> rusqlite::Result<Option<ScanRecord>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage
+            "SELECT id, repo, branch, commit_sha, command, pr_number, finding_count, summary, created_at, stage, error_message, failed_at_stage, work_dir
              FROM scans WHERE id = ?1",
         )?;
 
@@ -417,6 +429,7 @@ impl Store {
                 stage: row.get(9)?,
                 error_message: row.get(10)?,
                 failed_at_stage: row.get(11)?,
+                work_dir: row.get(12)?,
             })
         })?;
 
@@ -522,6 +535,7 @@ mod tests {
             stage: "completed".into(),
             error_message: None,
             failed_at_stage: None,
+            work_dir: None,
         }
     }
 
@@ -1102,6 +1116,28 @@ mod tests {
         let id = store.insert_scan(&sample_scan()).unwrap();
         assert!(id > 0);
         assert!(db_path.exists());
+    }
+
+    #[test]
+    fn store_update_scan_work_dir() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        store
+            .update_scan_work_dir(scan_id, "/tmp/cartomancer-xyz")
+            .unwrap();
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert_eq!(scan.work_dir.as_deref(), Some("/tmp/cartomancer-xyz"));
+    }
+
+    #[test]
+    fn store_work_dir_none_by_default() {
+        let store = test_store();
+        let scan_id = store.insert_scan(&sample_scan()).unwrap();
+
+        let scan = store.get_scan(scan_id).unwrap().unwrap();
+        assert!(scan.work_dir.is_none());
     }
 
     #[test]

@@ -25,6 +25,7 @@ pub enum ReviewStatus {
 #[serde(rename_all = "snake_case")]
 pub enum PipelineStage {
     Pending,
+    Prepared,
     Scanned,
     Enriched,
     Escalated,
@@ -38,6 +39,7 @@ impl PipelineStage {
     pub fn from_db(s: &str) -> Option<Self> {
         match s {
             "pending" => Some(Self::Pending),
+            "prepared" => Some(Self::Prepared),
             "scanned" => Some(Self::Scanned),
             "enriched" => Some(Self::Enriched),
             "escalated" => Some(Self::Escalated),
@@ -52,6 +54,7 @@ impl PipelineStage {
     pub fn as_db_str(&self) -> &'static str {
         match self {
             Self::Pending => "pending",
+            Self::Prepared => "prepared",
             Self::Scanned => "scanned",
             Self::Enriched => "enriched",
             Self::Escalated => "escalated",
@@ -166,6 +169,10 @@ mod tests {
                 Some(PipelineStage::Pending)
             );
             assert_eq!(
+                PipelineStage::from_db("prepared"),
+                Some(PipelineStage::Prepared)
+            );
+            assert_eq!(
                 PipelineStage::from_db("scanned"),
                 Some(PipelineStage::Scanned)
             );
@@ -202,6 +209,7 @@ mod tests {
         fn as_db_str_round_trip() {
             let stages = [
                 PipelineStage::Pending,
+                PipelineStage::Prepared,
                 PipelineStage::Scanned,
                 PipelineStage::Enriched,
                 PipelineStage::Escalated,
@@ -224,7 +232,8 @@ mod tests {
 
         #[test]
         fn ordering_is_correct() {
-            assert!(PipelineStage::Pending < PipelineStage::Scanned);
+            assert!(PipelineStage::Pending < PipelineStage::Prepared);
+            assert!(PipelineStage::Prepared < PipelineStage::Scanned);
             assert!(PipelineStage::Scanned < PipelineStage::Enriched);
             assert!(PipelineStage::Enriched < PipelineStage::Escalated);
             assert!(PipelineStage::Escalated < PipelineStage::Deepened);

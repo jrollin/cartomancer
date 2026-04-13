@@ -22,6 +22,10 @@ pub struct ScanRecord {
     /// The stage at which the pipeline failed (v4). `stage` retains the last
     /// successful checkpoint so `--resume` can restart from there.
     pub failed_at_stage: Option<String>,
+    /// Work directory path used during this scan (v5). Used by `--resume` to
+    /// locate the checkout without re-cloning.
+    #[serde(default)]
+    pub work_dir: Option<String>,
 }
 
 fn default_stage() -> String {

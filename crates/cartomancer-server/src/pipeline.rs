@@ -74,7 +74,7 @@ pub async fn run_pipeline(
     let pipeline_start = Instant::now();
 
     // Determine which stage to start from (resume support)
-    let (start_stage, mut findings, scan_id) = match resume_scan_id {
+    let (start_stage, mut findings, scan_id, resume_work_dir) = match resume_scan_id {
         Some(sid) => {
             let store = Store::open(&config.storage.db_path)
                 .map_err(|e| anyhow::anyhow!("failed to open store for resume: {e}"))?;
@@ -108,9 +108,9 @@ pub async fn run_pipeline(
             let resumed_findings = stored_to_findings(&stored);
 
             info!(scan_id = sid, stage = %stage, findings = resumed_findings.len(), "resuming pipeline");
-            (stage, resumed_findings, Some(sid))
+            (stage, resumed_findings, Some(sid), scan.work_dir)
         }
-        None => (PipelineStage::Pending, vec![], None),
+        None => (PipelineStage::Pending, vec![], None, None),
     };
 
     // 0. LLM health check — warn early if provider is unreachable
@@ -127,23 +127,6 @@ pub async fn run_pipeline(
     // 1. Fetch PR metadata
     info!(repo, pr_number, "fetching PR metadata");
     let pr_meta = github.fetch_pr_metadata(repo, pr_number).await?;
-
-    // 2. Prepare working directory
-    let (work_path, temp_dir) = prepare_work_dir(repo, token, work_dir)?;
-    let work_str = work_path.to_string_lossy();
-
-    // Fetch and checkout PR head, fetch base for opengrep --baseline-commit
-    prepare_pr_commits(&work_path, &pr_meta)?;
-
-    // 3. Fetch and parse diff
-    info!("fetching PR diff");
-    let raw_diff = github.fetch_diff(repo, pr_number).await?;
-    let diff = parse_diff(&raw_diff)?;
-    info!(
-        files_changed = diff.files_changed.len(),
-        chunks = diff.chunks.len(),
-        "diff parsed"
-    );
 
     // Open store for stage persistence (best-effort — stage tracking is optional)
     let store = Store::open(&config.storage.db_path).ok();
@@ -167,6 +150,7 @@ pub async fn run_pipeline(
                     stage: "pending".into(),
                     error_message: None,
                     failed_at_stage: None,
+                    work_dir: None,
                 };
                 match s.insert_scan(&record) {
                     Ok(id) => Some(id),
@@ -207,6 +191,58 @@ pub async fn run_pipeline(
                 }
             }
         };
+
+    // --- Stage: Prepare (clone + checkout + diff) ---
+    let (work_path, temp_dir, diff) = if start_stage < PipelineStage::Prepared {
+        // Resolve work-dir: explicit --work-dir flag wins, otherwise fresh clone
+        let (work_path, temp_dir) = prepare_work_dir(repo, token, work_dir)?;
+
+        if let Err(e) = prepare_pr_commits(&work_path, &pr_meta) {
+            record_failure(&store, scan_id, "prepared", &e);
+            return Err(e);
+        }
+
+        let diff = match async {
+            info!("fetching PR diff");
+            let raw_diff = github.fetch_diff(repo, pr_number).await?;
+            parse_diff(&raw_diff)
+        }
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                record_failure(&store, scan_id, "prepared", &e);
+                return Err(e);
+            }
+        };
+        info!(
+            files_changed = diff.files_changed.len(),
+            chunks = diff.chunks.len(),
+            "diff parsed"
+        );
+
+        // Persist work_dir and advance stage only after all prepare operations succeed
+        let work_str = work_path.to_string_lossy();
+        if let (Some(id), Some(ref s)) = (scan_id, &store) {
+            if let Err(e) = s.update_scan_work_dir(id, &work_str) {
+                warn!(err = %e, "failed to persist work_dir");
+            }
+        }
+        advance_stage(&store, scan_id, "prepared", &findings);
+        (work_path, temp_dir, diff)
+    } else {
+        info!(stage = "prepared", "skipping (already completed)");
+        // Resolve work-dir for resumed scan: explicit flag > stored path > fresh clone
+        let effective_work_dir = work_dir.map(|s| s.to_string()).or(resume_work_dir);
+        let (work_path, temp_dir) = prepare_work_dir(repo, token, effective_work_dir.as_deref())?;
+        prepare_pr_commits(&work_path, &pr_meta)?;
+
+        info!("fetching PR diff");
+        let raw_diff = github.fetch_diff(repo, pr_number).await?;
+        let diff = parse_diff(&raw_diff)?;
+        (work_path, temp_dir, diff)
+    };
+    let work_str = work_path.to_string_lossy();
 
     // --- Stage: Scan ---
     if start_stage < PipelineStage::Scanned {
@@ -262,7 +298,7 @@ pub async fn run_pipeline(
 
     // --- Stage: Enrich ---
     if start_stage < PipelineStage::Enriched {
-        enrich_findings(&work_path, config, &mut findings);
+        enrich_findings_batch(&work_path, config, &mut findings);
         advance_stage(&store, scan_id, "enriched", &findings);
     } else {
         info!(stage = "enriched", "skipping (already completed)");
@@ -491,38 +527,22 @@ fn prepare_pr_commits(work_path: &Path, pr_meta: &PrMetadata) -> Result<()> {
     Ok(())
 }
 
-/// Enrich findings with cartog graph context (if .cartog.db exists).
-fn enrich_findings(work_path: &Path, config: &AppConfig, findings: &mut [Finding]) {
-    let db_path = work_path.join(".cartog.db");
+/// Enrich findings with cartog graph context using batch-optimized queries.
+///
+/// Deduplicates DB queries: one `outline()` per unique file, one `impact()` +
+/// `refs()` per unique symbol. Falls back gracefully if .cartog.db is missing.
+fn enrich_findings_batch(work_path: &Path, config: &AppConfig, findings: &mut [Finding]) {
+    let db_path = work_path.join(&config.severity.cartog_db_path);
     if !db_path.exists() {
-        info!("no .cartog.db found, skipping graph enrichment");
+        info!(path = %db_path.display(), "cartog database not found, skipping graph enrichment");
         return;
     }
 
     match CartogEnricher::open(&db_path.to_string_lossy(), config.severity.impact_depth) {
         Ok(enricher) => {
-            let mut enriched = 0u32;
-            let mut failed = 0u32;
-            for finding in findings.iter_mut() {
-                match enricher.enrich(finding) {
-                    Ok(()) => {
-                        if finding.graph_context.is_some() {
-                            enriched += 1;
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            rule = %finding.rule_id,
-                            file = %finding.file_path,
-                            line = finding.start_line,
-                            err = %e,
-                            "failed to enrich finding, skipping"
-                        );
-                        failed += 1;
-                    }
-                }
+            if let Err(e) = enricher.enrich_batch_optimized(findings) {
+                warn!(err = %e, "batch enrichment failed");
             }
-            info!(enriched, failed, "graph enrichment complete");
         }
         Err(e) => {
             warn!(
@@ -807,6 +827,7 @@ pub fn persist_scan(
         stage: "completed".into(),
         error_message: None,
         failed_at_stage: None,
+        work_dir: None,
     };
 
     let scan_id = match store.insert_scan(&record) {

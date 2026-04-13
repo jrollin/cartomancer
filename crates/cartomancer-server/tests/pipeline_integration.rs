@@ -75,6 +75,7 @@ fn insert_test_scan(store: &Store, repo: &str, branch: &str, findings: &[Finding
         stage: "completed".into(),
         error_message: None,
         failed_at_stage: None,
+        work_dir: None,
     };
     let scan_id = store.insert_scan(&record).expect("insert_scan failed");
     if !findings.is_empty() {
@@ -565,11 +566,19 @@ fn scan_stage_tracking_progression() {
         stage: "pending".into(),
         error_message: None,
         failed_at_stage: None,
+        work_dir: None,
     };
     let scan_id = store.insert_scan(&record).unwrap();
 
     // Progress through stages
-    for stage in &["scanned", "enriched", "escalated", "deepened", "completed"] {
+    for stage in &[
+        "prepared",
+        "scanned",
+        "enriched",
+        "escalated",
+        "deepened",
+        "completed",
+    ] {
         store.update_scan_stage(scan_id, stage).unwrap();
         let scan = store.get_scan(scan_id).unwrap().unwrap();
         assert_eq!(scan.stage, *stage);
@@ -593,6 +602,7 @@ fn scan_failure_records_error_metadata() {
         stage: "pending".into(),
         error_message: None,
         failed_at_stage: None,
+        work_dir: None,
     };
     let scan_id = store.insert_scan(&record).unwrap();
 
