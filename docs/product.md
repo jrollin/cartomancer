@@ -1,59 +1,71 @@
 # Cartomancer — Product Overview
 
-> PR review with blast radius awareness.
+> Static analysis finds bugs. Blast radius tells you which ones matter.
 
-## Purpose
+## The Problem
 
-Cartomancer is an automated PR review tool that combines static analysis with code graph intelligence to produce structurally-aware, severity-escalated review comments on GitHub pull requests.
+Every PR review tool can tell you "this line matches a SQL injection pattern." None of them tell you _why that matters in your codebase_. A SQL injection in a dead utility is noise. A SQL injection reachable from 47 callers including your authentication endpoint is a production incident waiting to happen.
 
-## Core Insight
+Developers waste time triaging findings that lack structural context. Security teams can't prioritize when every finding looks the same severity. The signal-to-noise ratio of static analysis tools is too low to be useful without manual triage.
 
-Static analysis finds bugs. Blast radius tells you which bugs matter.
+## What Cartomancer Does
 
-A SQL injection in a dead function is noise. A SQL injection reachable from 47 callers including your auth endpoint is critical. Cartomancer is the bridge between "this pattern matches" and "this matters because it affects your payment flow."
+Cartomancer is an automated PR review tool that combines static analysis with code graph intelligence. For every finding, it answers: _how many callers does this affect? Does it touch auth or payment flows? How deep is the impact chain?_
 
-## Target Users
+Findings are automatically escalated (or capped) based on their structural context — not just the pattern that matched.
 
-- **Engineering teams** using GitHub PRs who want automated review beyond linting
-- **Security teams** wanting triage that accounts for code reachability
+High-severity findings get explained by an LLM with your team's conventions injected as context. Each explanation includes a suggested fix as a unified diff and an AI agent prompt for automated remediation.
+
+## Who It's For
+
+- **Engineering teams** using GitHub PRs who want review comments that prioritize what matters
+- **Security teams** wanting triage that accounts for code reachability, not just pattern matching
 - **Open-source maintainers** reviewing contributions from external contributors
+- **Solo developers** who want a second pair of eyes that understands blast radius
 
 ## Key Features
 
-- **Opengrep integration**: 3000+ free rules, PR-aware via `--baseline-commit`, cross-function taint analysis, enclosing context for LLM deepening
-- **Custom rule YAML**: auto-discover team-specific business rules and coding conventions from `.cartomancer/rules/`
-- **Blast radius via cartog**: transitive impact analysis, caller graphs, domain detection
-- **Severity escalation**: findings automatically upgraded when they touch auth/payment flows or have large blast radius; per-rule severity overrides via `[knowledge.rules]`
-- **LLM deepening**: high-severity findings explained in context by Ollama (local) or Claude (production), with suggested fixes as unified diffs and AI agent prompts
-- **Company knowledge base**: inject team-specific context (`.cartomancer/knowledge.md`) and custom system prompts into LLM deepening for company-aware analysis
-- **Comment categories**: findings classified as Actionable (has fix or severity >= Error) or Nitpick, with collapsible sections for fixes and agent prompts
-- **GitHub PR comments**: categorized inline comments, off-diff caution banners, summary with actionable counts
-- **Finding persistence**: SQLite storage of scan results, regression detection (new vs. existing findings), and false positive dismissal
+| Feature | What it does |
+|---------|-------------|
+| **Opengrep scanning** | 3000+ open rules + custom YAML rules from `.cartomancer/rules/` |
+| **Blast radius** | Transitive impact analysis via cartog: caller count, impact depth, domain detection |
+| **Severity escalation** | Auto-upgrade based on blast radius, domain tags (auth/payment), caller count |
+| **Per-rule overrides** | `min_severity`, `max_severity`, `always_deepen` per rule ID |
+| **LLM deepening** | Conditional: Ollama (local) or Claude (production). Analysis + fix + agent prompt |
+| **Company knowledge** | Inject `.cartomancer/knowledge.md` into every LLM prompt |
+| **Regression detection** | Fingerprint-based: distinguish new findings from pre-existing ones |
+| **Finding dismissal** | Suppress false positives by fingerprint. Survives line shifts, reappears on code changes |
+| **GitHub native** | Inline comments, off-diff caution banners, summary with actionable/nitpick counts |
+| **Persistence** | SQLite: scan history, finding search, branch filtering |
+| **Webhook server** | Automated reviews on every PR event. HMAC-validated, bounded concurrency |
+| **Single binary** | Rust. No Python, no Docker. Air-gap capable with Ollama |
 
 ## Pipeline
 
-```
-GitHub webhook → fetch diff → opengrep scan (+ custom rules)
-  → cartog enrich → escalate severity (+ rule overrides)
-  → LLM deepen (+ company knowledge) → regression check
-  → dismiss filter → post comments + persist
+```text
+PR opened → fetch diff → opengrep scan (+ custom rules)
+  → cartog enrich (callers, impact, domain)
+  → escalate severity (+ per-rule overrides)
+  → LLM deepen (+ company knowledge)
+  → regression check → dismiss filter
+  → persist + post categorized comments
 ```
 
 ## Positioning
 
-| Tool | Strength | Gap Cartomancer fills |
-|------|----------|----------------------|
-| CodeRabbit | LLM reviews + learning | No structural graph, no blast radius |
-| SonarQube | Taint analysis + rules | No LLM, no graph awareness, no PR-native |
-| Opengrep | Best open rule ecosystem | No blast radius, no severity escalation |
+| Tool | What it does well | Gap Cartomancer fills |
+|------|-------------------|----------------------|
+| CodeRabbit | LLM reviews + learning | No structural graph, no blast radius awareness |
+| SonarQube | Taint analysis + rule library | No LLM, no graph context, no PR-native comments |
+| Opengrep | Best open rule ecosystem | No blast radius, no severity escalation, no LLM |
 | Claude Code review | Zero-setup LLM review | No persistent graph, no rule backbone |
 
-Cartomancer is not a replacement for any of these. It adds blast-radius-aware severity escalation on top of opengrep findings, powered by cartog.
+Cartomancer is not a replacement for these tools. It adds the structural layer they don't have: blast-radius-aware severity escalation on top of opengrep findings, powered by cartog.
 
 ## Non-Goals
 
 - Not a CI runner or test framework
 - Not a code formatter or style enforcer
-- Not a full SAST platform (no taint analysis in v1)
+- Not a full SAST platform (no inter-file taint analysis in v1)
 - Not a dashboard or metrics tool (v1 is CLI + webhook only)
 - Not a retention/pruning system — all scan history is stored indefinitely

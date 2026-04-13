@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cartomancer — Documentation</title>
+  <meta name="description" content="CLI reference, configuration, pipeline stages, and webhook setup for Cartomancer.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- -- Nav ------------------------------------------------ -->
+<header class="nav">
+  <div class="nav-inner">
+    <a href="index.html" class="nav-logo">Cartomancer</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+    <ul class="nav-links">
+      <li><a href="index.html#features">Features</a></li>
+      <li><a href="index.html#pipeline">Pipeline</a></li>
+      <li><a href="index.html#compare">Compare</a></li>
+      <li><a href="index.html#install">Install</a></li>
+      <li><a href="usage.html">Docs</a></li>
+      <li>
+        <a href="https://github.com/jrollin/cartomancer" class="github-link" aria-label="GitHub">
+          <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" fill="currentColor"/></svg>
+        </a>
+      </li>
+    </ul>
+  </div>
+</header>
+
+<!-- -- Docs Layout --------------------------------------- -->
+<div class="container">
+  <div class="docs-layout">
+
+    <!-- Sidebar -->
+    <aside class="docs-sidebar">
+      <nav>
+        <div class="sidebar-group">
+          <div class="sidebar-label">Getting Started</div>
+          <a href="#quick-start">Quick Start</a>
+          <a href="#prerequisites">Prerequisites</a>
+          <a href="#first-review">Your First Review</a>
+        </div>
+        <div class="sidebar-group">
+          <div class="sidebar-label">CLI Reference</div>
+          <a href="#cmd-scan">cartomancer scan</a>
+          <a href="#cmd-review">cartomancer review</a>
+          <a href="#cmd-history">cartomancer history</a>
+          <a href="#cmd-findings">cartomancer findings</a>
+          <a href="#cmd-dismiss">cartomancer dismiss</a>
+          <a href="#cmd-dismissed">cartomancer dismissed</a>
+          <a href="#cmd-undismiss">cartomancer undismiss</a>
+          <a href="#cmd-serve">cartomancer serve</a>
+          <a href="#cmd-doctor">cartomancer doctor</a>
+        </div>
+        <div class="sidebar-group">
+          <div class="sidebar-label">Configuration</div>
+          <a href="#config">Config File</a>
+          <a href="#config-opengrep">Opengrep</a>
+          <a href="#config-llm">LLM Providers</a>
+          <a href="#config-knowledge">Knowledge Base</a>
+          <a href="#config-rules">Per-Rule Overrides</a>
+          <a href="#config-storage">Storage</a>
+        </div>
+        <div class="sidebar-group">
+          <div class="sidebar-label">Pipeline</div>
+          <a href="#pipeline-stages">Stages</a>
+          <a href="#pipeline-escalation">Escalation Matrix</a>
+          <a href="#pipeline-deepening">LLM Deepening</a>
+          <a href="#pipeline-regression">Regression Detection</a>
+          <a href="#pipeline-comments">Comment Formatting</a>
+        </div>
+        <div class="sidebar-group">
+          <div class="sidebar-label">Webhook Server</div>
+          <a href="#webhook-setup">Setup</a>
+          <a href="#webhook-github">GitHub Config</a>
+          <a href="#webhook-concurrency">Concurrency</a>
+        </div>
+        <div class="sidebar-group">
+          <div class="sidebar-label">Reference</div>
+          <a href="#architecture">Architecture</a>
+          <a href="#key-types">Key Types</a>
+          <a href="#env-vars">Environment Variables</a>
+        </div>
+      </nav>
+    </aside>
+
+    <!-- Content -->
+    <main class="docs-content">
+
+      <p style="margin-bottom: 24px;">
+        <span class="badge">v0.6.0</span>
+        <a href="https://github.com/jrollin/cartomancer/releases/latest" style="margin-left: 8px; font-size: 13px;">View changelog &rarr;</a>
+      </p>
+
+      <!-- Getting Started -->
+
+      <h2 id="quick-start">Quick Start</h2>
+      <pre>cargo install cartomancer
+export GITHUB_TOKEN=ghp_...
+
+<span class="comment"># Review a PR (dry run — prints to stdout, doesn't post)</span>
+cartomancer review owner/repo 42 --dry-run
+
+<span class="comment"># Review and post comments to GitHub</span>
+cartomancer review owner/repo 42
+
+<span class="comment"># Local scan (no GitHub, no PR)</span>
+cartomancer scan ./src</pre>
+
+      <h2 id="prerequisites">Prerequisites</h2>
+      <ul>
+        <li><strong>Opengrep</strong> must be installed and in your PATH. <a href="https://github.com/opengrep/opengrep">Install opengrep &rarr;</a></li>
+        <li><strong>GITHUB_TOKEN</strong> environment variable (for <code>review</code> and <code>serve</code> commands)</li>
+        <li><strong>Ollama</strong> (optional) for local LLM deepening, or <strong>ANTHROPIC_API_KEY</strong> for Claude</li>
+      </ul>
+      <p>Run <code>cartomancer doctor</code> to verify your setup.</p>
+
+      <h2 id="first-review">Your First Review</h2>
+      <pre><span class="comment"># 1. Install</span>
+cargo install cartomancer
+
+<span class="comment"># 2. Set your GitHub token</span>
+export GITHUB_TOKEN=ghp_your_token_here
+
+<span class="comment"># 3. Dry run against a real PR</span>
+cartomancer review your-org/your-repo 123 --dry-run
+
+<span class="comment"># 4. Check the output — severity, blast radius, escalations</span>
+<span class="comment"># 5. When satisfied, run without --dry-run to post to GitHub</span>
+cartomancer review your-org/your-repo 123</pre>
+      <p>The first run clones the repo to a temp directory, runs opengrep, enriches findings with cartog, and posts categorized comments. Use <code>--work-dir ./repo</code> to reuse an existing checkout.</p>
+
+      <!-- CLI Reference -->
+
+      <h2 id="cmd-scan"><code>cartomancer scan &lt;path&gt;</code></h2>
+      <p>Run opengrep on a local directory. No GitHub, no PR — useful for local development or CI pipelines.</p>
+      <pre>cartomancer scan .                       <span class="comment"># scan current directory</span>
+cartomancer scan src/ --format json       <span class="comment"># JSON output</span>
+cartomancer scan . --format text          <span class="comment"># human-readable (default)</span></pre>
+      <p>Findings are enriched with cartog blast radius and persisted to the local store.</p>
+
+      <h2 id="cmd-review"><code>cartomancer review &lt;owner/repo&gt; &lt;pr&gt;</code></h2>
+      <p>The main command. Runs the full 11-stage pipeline against a GitHub PR.</p>
+      <pre>cartomancer review acme/api 42                    <span class="comment"># review and post</span>
+cartomancer review acme/api 42 --dry-run           <span class="comment"># preview without posting</span>
+cartomancer review acme/api 42 --work-dir ./repo   <span class="comment"># reuse checkout</span>
+cartomancer review acme/api 42 --resume abc123     <span class="comment"># resume from last stage</span>
+cartomancer review acme/api 42 --format json       <span class="comment"># JSON output</span></pre>
+      <p>Flags:</p>
+      <ul>
+        <li><code>--dry-run</code> — output ReviewResult to stdout, skip posting to GitHub</li>
+        <li><code>--work-dir &lt;path&gt;</code> — use an existing directory instead of cloning to temp</li>
+        <li><code>--resume &lt;scan-id&gt;</code> — resume a previously failed scan from its last completed stage</li>
+        <li><code>--format text|json</code> — output format (default: text)</li>
+      </ul>
+
+      <h2 id="cmd-history"><code>cartomancer history</code></h2>
+      <p>Browse past scan results stored in the local database.</p>
+      <pre>cartomancer history                       <span class="comment"># all scans</span>
+cartomancer history --branch main          <span class="comment"># filter by branch</span>
+cartomancer history --format json          <span class="comment"># JSON output</span></pre>
+
+      <h2 id="cmd-findings"><code>cartomancer findings</code></h2>
+      <p>Search and filter findings across scans.</p>
+      <pre>cartomancer findings                                <span class="comment"># latest scan</span>
+cartomancer findings abc123                          <span class="comment"># specific scan</span>
+cartomancer findings --rule sql-injection            <span class="comment"># by rule pattern</span>
+cartomancer findings --severity critical             <span class="comment"># by severity</span>
+cartomancer findings --file "src/api/*"              <span class="comment"># by file pattern</span>
+cartomancer findings --branch feature/auth           <span class="comment"># by branch</span></pre>
+
+      <h2 id="cmd-dismiss"><code>cartomancer dismiss &lt;scan-id&gt; &lt;index&gt;</code></h2>
+      <p>Dismiss a finding as a false positive. Dismissed findings are suppressed by fingerprint in future scans.</p>
+      <pre>cartomancer dismiss abc123 2 --reason "intentional pattern"</pre>
+      <p>Dismissals are fingerprint-based (SHA-256 of rule + file + snippet). If the code changes, the fingerprint changes and the finding reappears.</p>
+
+      <h2 id="cmd-dismissed"><code>cartomancer dismissed</code></h2>
+      <p>List all active dismissals.</p>
+      <pre>cartomancer dismissed --format json</pre>
+
+      <h2 id="cmd-undismiss"><code>cartomancer undismiss &lt;dismissal-id&gt;</code></h2>
+      <p>Remove a dismissal, allowing the finding to appear again.</p>
+      <pre>cartomancer undismiss d-abc123</pre>
+
+      <h2 id="cmd-serve"><code>cartomancer serve</code></h2>
+      <p>Start a webhook server that receives GitHub <code>pull_request</code> events and runs the review pipeline automatically.</p>
+      <pre>cartomancer serve                         <span class="comment"># default port 3000</span>
+cartomancer serve --port 8080             <span class="comment"># custom port</span></pre>
+      <p>See <a href="#webhook-setup">Webhook Server</a> section for GitHub configuration.</p>
+
+      <h2 id="cmd-doctor"><code>cartomancer doctor</code></h2>
+      <p>Validate that all dependencies and configuration are correct.</p>
+      <pre>cartomancer doctor                        <span class="comment"># human-readable</span>
+cartomancer doctor --format json          <span class="comment"># structured output</span></pre>
+      <p>Checks: opengrep in PATH, GitHub token, LLM provider, database, custom rules directory, knowledge file.</p>
+
+      <!-- Configuration -->
+
+      <h2 id="config">Configuration</h2>
+      <p>Cartomancer works with zero configuration. Optionally, place a <code>.cartomancer.toml</code> at your project root:</p>
+      <pre><span class="comment"># .cartomancer.toml — full reference</span>
+
+[github]
+token_env = "GITHUB_TOKEN"           <span class="comment"># env var name (default)</span>
+webhook_secret = ""                  <span class="comment"># for serve command HMAC validation</span>
+
+[opengrep]
+rules_dir = ".cartomancer/rules"     <span class="comment"># custom YAML rules directory</span>
+exclude_patterns = ["test/**", "vendor/**"]
+enclosing_context = true             <span class="comment"># include function body in LLM prompt</span>
+taint_intrafile = true               <span class="comment"># cross-function taint analysis</span>
+dynamic_timeout = 30                 <span class="comment"># per-file timeout in seconds</span>
+
+[llm]
+provider = "ollama"                  <span class="comment"># "ollama" or "anthropic"</span>
+deepening_threshold = "error"        <span class="comment"># minimum severity for LLM</span>
+
+[llm.ollama]
+base_url = "http://localhost:11434"
+model = "llama3.2"
+
+[llm.anthropic]
+model = "claude-sonnet-4-20250514"
+max_tokens = 4096                    <span class="comment"># 1..=128,000</span>
+
+[graph]
+blast_radius_threshold = 5           <span class="comment"># escalation threshold</span>
+
+[knowledge]
+file = ".cartomancer/knowledge.md"   <span class="comment"># company context for LLM</span>
+system_prompt = "You are reviewing a fintech codebase."
+max_chars = 8000                     <span class="comment"># truncation limit</span>
+
+[storage]
+db_path = ".cartomancer.db"          <span class="comment"># SQLite database path</span>
+
+[serve]
+max_concurrent_reviews = 4</pre>
+
+      <h2 id="config-opengrep">Opengrep</h2>
+      <p>Cartomancer invokes opengrep as a subprocess. All opengrep-specific features are opt-in:</p>
+      <ul>
+        <li><code>--taint-intrafile</code> — cross-function taint tracking within a file</li>
+        <li><code>--output-enclosing-context</code> — include enclosing function/class body</li>
+        <li><code>--dynamic-timeout N</code> — per-file analysis timeout</li>
+        <li><code>--baseline-commit &lt;sha&gt;</code> — only report findings new since the base branch</li>
+        <li><code>--exclude</code> — skip files matching patterns</li>
+      </ul>
+      <p>Custom rules in <code>.cartomancer/rules/</code> are auto-discovered and passed to opengrep alongside built-in rules.</p>
+
+      <h2 id="config-llm">LLM Providers</h2>
+      <table>
+        <thead>
+          <tr><th>Provider</th><th>Config</th><th>Use case</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Ollama</strong></td>
+            <td><code>[llm] provider = "ollama"</code></td>
+            <td>Local development, air-gapped, free</td>
+          </tr>
+          <tr>
+            <td><strong>Anthropic</strong></td>
+            <td><code>[llm] provider = "anthropic"</code></td>
+            <td>Production, higher quality analysis. Requires <code>ANTHROPIC_API_KEY</code></td>
+          </tr>
+        </tbody>
+      </table>
+      <p>LLM deepening is conditional: only triggers when finding severity &ge; <code>deepening_threshold</code> AND blast radius &gt; 3 (or <code>always_deepen = true</code> on the rule).</p>
+
+      <h2 id="config-knowledge">Knowledge Base</h2>
+      <p>Place a markdown file at <code>.cartomancer/knowledge.md</code> (or configure the path). Its content is injected into every LLM prompt as a <code>## Company Context</code> section.</p>
+      <pre><span class="comment"># .cartomancer/knowledge.md</span>
+## Architecture
+- Monolith Rails app migrating to Rust microservices
+- Auth service handles OAuth2 + SAML
+- Payment service wraps Stripe API
+
+## Security Policies
+- All user input must be sanitized at controller level
+- SQL queries must use parameterized statements
+- PII must not appear in logs</pre>
+      <p>Security: path validated against traversal, binary files rejected, content truncated at <code>max_chars</code>.</p>
+
+      <h2 id="config-rules">Per-Rule Overrides</h2>
+      <p>Override severity bounds and LLM behavior per rule ID:</p>
+      <pre>[knowledge.rules.sql-injection]
+min_severity = "error"              <span class="comment"># floor before escalation</span>
+max_severity = "critical"           <span class="comment"># ceiling after escalation</span>
+always_deepen = true                <span class="comment"># always run LLM, skip gates</span>
+
+[knowledge.rules.unused-import]
+max_severity = "info"               <span class="comment"># cap at info, never escalate</span></pre>
+
+      <h2 id="config-storage">Storage</h2>
+      <p>All scans and findings are persisted to a SQLite database (<code>.cartomancer.db</code> by default). The schema has 3 tables:</p>
+      <ul>
+        <li><strong>scans</strong> — scan metadata, pipeline stage, error messages</li>
+        <li><strong>findings</strong> — per-finding data with fingerprint, severity, suggested fix, agent prompt</li>
+        <li><strong>dismissals</strong> — false positive suppression by fingerprint</li>
+      </ul>
+      <p>Persistence is best-effort: if the database is unavailable, the pipeline continues and logs a warning.</p>
+
+      <!-- Pipeline -->
+
+      <h2 id="pipeline-stages">Pipeline Stages</h2>
+      <pre>1. Resolve GitHub token (env or config)
+2. Fetch PR metadata (head SHA, base SHA)
+3. Prepare work dir (clone or reuse --work-dir)
+4. Fetch + parse unified diff
+5. Opengrep scan (--baseline-commit, --exclude, custom rules)
+6. Enrich with cartog (impact, refs, callers, domain detection)
+7. Escalate severity (blast radius + domain + per-rule overrides)
+8. LLM deepen (conditional: severity + blast_radius gates)
+9. Regression check (fingerprint comparison with base branch)
+10. Dismiss filter (remove dismissed findings)
+11. Persist scan + Post review (or --dry-run output)</pre>
+      <p>Stages 4-7 persist findings to the store after each stage for resumability. Use <code>--resume &lt;scan-id&gt;</code> to restart from the last completed stage.</p>
+
+      <h2 id="pipeline-escalation">Escalation Matrix</h2>
+      <table>
+        <thead>
+          <tr><th>Base Severity</th><th>Blast Radius</th><th>Domain</th><th>Callers</th><th>Final Severity</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>any</td><td>&ge; threshold&times;4</td><td>any</td><td>any</td><td><span class="badge">Critical</span></td></tr>
+          <tr><td>any</td><td>&ge; threshold</td><td>any</td><td>any</td><td>Error (minimum)</td></tr>
+          <tr><td>any</td><td>any</td><td>auth</td><td>any</td><td><span class="badge">Critical</span></td></tr>
+          <tr><td>any</td><td>any</td><td>payment</td><td>any</td><td><span class="badge">Critical</span></td></tr>
+          <tr><td>any</td><td>any</td><td>any</td><td>&ge; 10</td><td>Error (minimum)</td></tr>
+          <tr><td>any</td><td>&lt; threshold</td><td>none</td><td>&lt; 10</td><td>unchanged</td></tr>
+        </tbody>
+      </table>
+      <p>Default <code>blast_radius_threshold</code> = 5 (configurable).</p>
+
+      <h2 id="pipeline-deepening">LLM Deepening</h2>
+      <p>Triggered when: severity &ge; <code>deepening_threshold</code> AND blast_radius &gt; 3, or <code>always_deepen = true</code>.</p>
+      <p>The LLM prompt includes:</p>
+      <ul>
+        <li>Finding details (rule, message, severity, file, code snippet)</li>
+        <li>Enclosing function/class body (truncated to 2000 chars)</li>
+        <li>Structural context from cartog (symbol name, blast radius, callers, domain tags)</li>
+        <li>Company knowledge from <code>.cartomancer/knowledge.md</code></li>
+        <li>Custom system prompt from config</li>
+      </ul>
+      <p>Response parsing extracts:</p>
+      <ul>
+        <li><strong>Analysis</strong> — 2-3 sentence explanation of real-world impact</li>
+        <li><strong>Suggested fix</strong> — unified diff extracted from <code>```diff</code> fence</li>
+        <li><strong>Agent prompt</strong> — self-contained prompt for AI agent remediation</li>
+      </ul>
+
+      <h2 id="pipeline-regression">Regression Detection</h2>
+      <p>Each finding is fingerprinted with SHA-256 of <code>rule_id:file_path:snippet_content</code>. During <code>review</code>, fingerprints are compared against the latest scan on the base branch:</p>
+      <ul>
+        <li><strong>New finding</strong> (<code>is_new: true</code>) — not in base branch baseline</li>
+        <li><strong>Existing finding</strong> (<code>is_new: false</code>) — already present before this PR</li>
+      </ul>
+      <p>Line numbers are excluded from the fingerprint because they shift with unrelated edits.</p>
+
+      <h2 id="pipeline-comments">Comment Formatting</h2>
+      <p>Cartomancer posts three types of GitHub comments:</p>
+      <ul>
+        <li><strong>Inline comments</strong> — on diff lines. Severity badge, category (Actionable/Nitpick), blast radius, LLM analysis, collapsible fix + agent prompt</li>
+        <li><strong>Off-diff comments</strong> — for findings outside the visible diff. Wrapped in a <code>[!CAUTION]</code> banner</li>
+        <li><strong>Summary comment</strong> — actionable count, severity breakdown, top escalated findings, scan metadata</li>
+      </ul>
+      <p>Classification: <strong>Actionable</strong> = has suggested fix OR severity &ge; Error. Otherwise <strong>Nitpick</strong>.</p>
+
+      <!-- Webhook Server -->
+
+      <h2 id="webhook-setup">Webhook Server Setup</h2>
+      <pre>cartomancer serve --port 3000</pre>
+      <p>Endpoints:</p>
+      <ul>
+        <li><code>POST /webhook</code> — receives GitHub <code>pull_request</code> events</li>
+        <li><code>GET /health</code> — health check (returns 200)</li>
+      </ul>
+
+      <h2 id="webhook-github">GitHub Configuration</h2>
+      <p>In your GitHub repository settings:</p>
+      <ul>
+        <li>Payload URL: <code>https://your-server:3000/webhook</code></li>
+        <li>Content type: <code>application/json</code></li>
+        <li>Secret: set in <code>.cartomancer.toml</code> as <code>github.webhook_secret</code></li>
+        <li>Events: select <strong>Pull requests</strong></li>
+      </ul>
+
+      <h2 id="webhook-concurrency">Concurrency</h2>
+      <p>Bounded by <code>serve.max_concurrent_reviews</code> (default: 4) via tokio Semaphore. Each review runs in a background task with its own temp dir, GitHub client, and store connection. Graceful shutdown on SIGTERM/SIGINT.</p>
+
+      <!-- Reference -->
+
+      <h2 id="architecture">Architecture</h2>
+      <pre>cartomancer-server (binary)
+  |-- cartomancer-core     pure domain types (Finding, Severity, config)
+  |-- cartomancer-graph    cartog enricher + severity escalator
+  |-- cartomancer-github   GitHub API client + webhook types
+  |-- cartomancer-store    SQLite persistence (scans, findings, dismissals)</pre>
+      <p>Error handling: <code>thiserror</code> in core, <code>anyhow</code> elsewhere. Per-finding errors are logged and skipped (partial results are better than no results).</p>
+
+      <h2 id="key-types">Key Types</h2>
+      <table>
+        <thead>
+          <tr><th>Type</th><th>Crate</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Finding</code></td><td>core</td><td>Opengrep finding + graph context + LLM analysis + fix + agent prompt</td></tr>
+          <tr><td><code>GraphContext</code></td><td>core</td><td>Blast radius, callers, domain tags from cartog</td></tr>
+          <tr><td><code>Severity</code></td><td>core</td><td>Info &lt; Warning &lt; Error &lt; Critical</td></tr>
+          <tr><td><code>ReviewResult</code></td><td>core</td><td>Final output posted to GitHub</td></tr>
+          <tr><td><code>PipelineStage</code></td><td>core</td><td>Pending &rarr; Scanned &rarr; Enriched &rarr; Escalated &rarr; Deepened &rarr; Completed / Failed</td></tr>
+          <tr><td><code>AppConfig</code></td><td>core</td><td>Deserialized from <code>.cartomancer.toml</code></td></tr>
+          <tr><td><code>LlmProvider</code></td><td>server</td><td>Async trait: Ollama and Anthropic implementations</td></tr>
+          <tr><td><code>CartogEnricher</code></td><td>graph</td><td>Wraps cartog::db::Database for blast radius queries</td></tr>
+          <tr><td><code>SeverityEscalator</code></td><td>graph</td><td>Blast radius + domain &rarr; severity upgrade</td></tr>
+          <tr><td><code>Store</code></td><td>store</td><td>SQLite persistence: CRUD, dismissals, baselines</td></tr>
+          <tr><td><code>PrMetadata</code></td><td>github</td><td>PR head/base SHA, refs, title</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="env-vars">Environment Variables</h2>
+      <table>
+        <thead>
+          <tr><th>Variable</th><th>Required</th><th>Purpose</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>GITHUB_TOKEN</code></td><td>for review/serve</td><td>GitHub API authentication</td></tr>
+          <tr><td><code>ANTHROPIC_API_KEY</code></td><td>for Anthropic LLM</td><td>Claude API authentication</td></tr>
+          <tr><td><code>RUST_LOG</code></td><td>no</td><td>Log level (e.g. <code>cartomancer=debug</code>)</td></tr>
+        </tbody>
+      </table>
+
+    </main>
+  </div>
+</div>
+
+<!-- -- Footer -------------------------------------------- -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <span>Cartomancer &middot; MIT License &middot; v0.6.0</span>
+      <ul class="footer-links">
+        <li><a href="https://github.com/jrollin/cartomancer">GitHub</a></li>
+        <li><a href="https://crates.io/crates/cartomancer">crates.io</a></li>
+        <li><a href="index.html">Home</a></li>
+      </ul>
+    </div>
+  </div>
+</footer>
+
+<script>
+var links = document.querySelectorAll('.docs-sidebar a');
+var sections = [];
+links.forEach(function(link) {
+  var id = link.getAttribute('href').slice(1);
+  var el = document.getElementById(id);
+  if (el) sections.push({ id: id, el: el, link: link });
+});
+
+window.addEventListener('scroll', function() {
+  var scrollTop = window.scrollY + 80;
+  var current = '';
+  sections.forEach(function(s) {
+    if (s.el.offsetTop <= scrollTop) current = s.id;
+  });
+  links.forEach(function(l) { l.classList.remove('active'); });
+  if (current) {
+    var active = document.querySelector('.docs-sidebar a[href="#' + current + '"]');
+    if (active) active.classList.add('active');
+  }
+});
+</script>
+
+</body>
+</html>
