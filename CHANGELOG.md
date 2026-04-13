@@ -1,11 +1,20 @@
-## [Unreleased]
+## [0.7.0] - 2026-04-13
 
-### Features
+### 🚀 Features
 
-- *(pipeline)* Add `Prepared` stage for granular resume after crash/timeout (schema v5, `work_dir` column)
-- *(graph)* Batch cartog enrichment: deduplicate outline/impact/refs queries by file and symbol
-- *(config)* Add `severity.cartog_db_path` to configure cartog database location (defaults to `.cartog.db`)
+- *(pipeline,graph)* Granular resume, batch enrichment, configurable cartog path
 
+### 🐛 Bug Fixes
+
+- *(graph,pipeline,config)* Address PR review findings
+
+### 📚 Documentation
+
+- Add GitHub Pages site and rewrite README for developer impact
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.7.0
 ## [0.6.0] - 2026-04-12
 
 ### 🚀 Features
