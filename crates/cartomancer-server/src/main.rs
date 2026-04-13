@@ -292,36 +292,16 @@ async fn cmd_scan(
 
     log_severity_summary("after opengrep", &findings);
 
-    // 2. Enrich with cartog (if indexed)
+    // 2. Enrich with cartog (if indexed) — batch-optimized
     let enrich_start = Instant::now();
-    let db_path = target.join(".cartog.db");
+    let db_path = target.join(&config.severity.cartog_db_path);
     if db_path.exists() {
         match CartogEnricher::open(&db_path.to_string_lossy(), config.severity.impact_depth) {
             Ok(enricher) => {
-                let mut enriched = 0u32;
-                let mut failed = 0u32;
-                for finding in &mut findings {
-                    match enricher.enrich(finding) {
-                        Ok(()) => {
-                            if finding.graph_context.is_some() {
-                                enriched += 1;
-                            }
-                        }
-                        Err(e) => {
-                            tracing::warn!(
-                                rule = %finding.rule_id,
-                                file = %finding.file_path,
-                                line = finding.start_line,
-                                err = %e,
-                                "failed to enrich finding, skipping"
-                            );
-                            failed += 1;
-                        }
-                    }
+                if let Err(e) = enricher.enrich_batch_optimized(&mut findings) {
+                    tracing::warn!(err = %e, "batch enrichment failed");
                 }
                 info!(
-                    enriched,
-                    failed,
                     elapsed_ms = enrich_start.elapsed().as_millis() as u64,
                     "graph enrichment complete"
                 );

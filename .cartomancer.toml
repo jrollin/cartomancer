@@ -44,6 +44,7 @@ max_tokens = 4096
 blast_radius_threshold = 5
 llm_deepening_threshold = "error"
 # impact_depth = 3
+# cartog_db_path = ".cartog.db"  # path to cartog database, relative to scanned directory
 
 # [github]
 # token = ""                     # prefer GITHUB_TOKEN env var

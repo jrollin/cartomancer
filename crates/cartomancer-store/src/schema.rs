@@ -6,7 +6,7 @@
 use rusqlite::Connection;
 
 /// Current schema version. Bump when adding new migrations.
-pub const CURRENT_VERSION: i32 = 4;
+pub const CURRENT_VERSION: i32 = 5;
 
 /// Run all pending migrations to bring the database up to [`CURRENT_VERSION`].
 ///
@@ -34,6 +34,9 @@ pub fn migrate(conn: &Connection) -> rusqlite::Result<()> {
     }
     if version < 4 {
         migrate_v4(conn)?;
+    }
+    if version < 5 {
+        migrate_v5(conn)?;
     }
 
     Ok(())
@@ -148,6 +151,21 @@ fn migrate_v4(conn: &Connection) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migrate_v5(conn: &Connection) -> rusqlite::Result<()> {
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(scans)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if !columns.contains(&"work_dir".to_string()) {
+        conn.execute_batch("ALTER TABLE scans ADD COLUMN work_dir TEXT;")?;
+    }
+
+    conn.pragma_update(None, "user_version", 5)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,6 +257,10 @@ mod tests {
         assert!(
             columns.contains(&"failed_at_stage".to_string()),
             "missing failed_at_stage column"
+        );
+        assert!(
+            columns.contains(&"work_dir".to_string()),
+            "missing work_dir column"
         );
     }
 
@@ -407,6 +429,23 @@ mod tests {
             result.is_err(),
             "FK constraint should reject non-existent scan_id"
         );
+    }
+
+    #[test]
+    fn schema_migrate_v5_is_resumable() {
+        let conn = Connection::open_in_memory().unwrap();
+        migrate(&conn).unwrap();
+
+        // Simulate partial v5: reset version to 4
+        conn.pragma_update(None, "user_version", 4).unwrap();
+
+        // Re-running migrate should not fail even though work_dir column already exists
+        migrate(&conn).unwrap();
+
+        let version: i32 = conn
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(version, CURRENT_VERSION);
     }
 
     #[test]
