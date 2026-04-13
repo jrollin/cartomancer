@@ -6,99 +6,157 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.77-blue.svg)](https://blog.rust-lang.org/2024/03/21/Rust-1.77.0.html)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> PR review with blast radius awareness.
+**Static analysis finds bugs. Blast radius tells you which ones matter.**
 
-Cartomancer combines [opengrep](https://github.com/opengrep/opengrep) static analysis with [cartog](https://github.com/jrollin/cartog) code graph intelligence to produce severity-escalated, structurally-aware review comments on GitHub pull requests.
+A SQL injection in dead code is noise. A SQL injection reachable from 47 callers including your auth endpoint is critical. Cartomancer bridges "pattern matches" and "this actually matters" by combining [opengrep](https://github.com/opengrep/opengrep) static analysis with [cartog](https://github.com/jrollin/cartog) code graph intelligence.
 
-**The core idea**: a finding that touches your auth flow and has 30 downstream callers is not the same severity as the same finding in a dead utility function. Cartomancer knows the difference.
+Every finding gets enriched with caller count, transitive impact, and domain detection (auth, payment, data). Severity escalates automatically based on structural context — not just the rule that matched.
+
+## What it does
+
+```text
+PR opened → opengrep scan (3000+ rules + your custom YAML)
+  → cartog blast radius (callers, impact depth, domain tags)
+  → severity escalation (Warning in auth flow → Critical)
+  → LLM deepening (explain impact + suggest fix as diff)
+  → regression check (new vs. existing findings)
+  → post categorized comments to GitHub PR
+```
+
+**Example output on a PR:**
+
+```
+Finding 1/5  CRITICAL  sql-injection
+  src/api/users.rs:47
+  Blast radius: 23 callers (auth, payment)
+  Escalated: Warning → Critical (auth domain, 23 callers)
+  LLM: "Unsanitized user input reaches SQL query via
+        authenticate() → fetch_user(). Affects all login
+        flows and payment verification."
+  Fix: suggested diff attached
+
+Finding 2/5  INFO  unused-import
+  src/utils.rs:3
+  Blast radius: 0 callers
+  Category: Nitpick
+
+Review: 2 actionable, 3 nitpicks
+```
+
+## Quick start
+
+```bash
+# Install (from crates.io)
+cargo install cartomancer
+
+# Or download a pre-built binary (no Rust toolchain needed)
+# macOS (Apple Silicon)
+curl -L https://github.com/jrollin/cartomancer/releases/latest/download/cartomancer-aarch64-apple-darwin.tar.gz | tar xz
+sudo mv cartomancer /usr/local/bin/
+# All platforms: https://github.com/jrollin/cartomancer/releases/latest
+
+# Check your setup
+cartomancer doctor
+
+# Scan a local directory (no GitHub token needed)
+cartomancer scan ./src
+
+# Review a GitHub PR (dry run — prints to stdout)
+export GITHUB_TOKEN=ghp_...
+cartomancer review owner/repo 42 --dry-run
+
+# Review and post comments to GitHub
+cartomancer review owner/repo 42
+```
+
+**With graph enrichment** (recommended):
+
+```bash
+cargo install cartog
+cd your-project && cartog index .
+cartomancer scan .    # findings now include blast radius
+```
+
+**With LLM deepening** (optional):
+
+```bash
+# Local (Ollama)
+ollama pull llama3.2
+cartomancer scan .    # critical findings get AI analysis + fix
+
+# Production (Claude)
+export ANTHROPIC_API_KEY=sk-...
+# Set [llm] provider = "anthropic" in .cartomancer.toml
+```
+
+## CLI commands
+
+| Command | Purpose |
+|---------|---------|
+| `cartomancer scan <path>` | Local scan — no GitHub, no PR |
+| `cartomancer review <owner/repo> <pr>` | Full pipeline → GitHub PR comments |
+| `cartomancer history` | Browse past scan results |
+| `cartomancer findings [<scan-id>]` | Search findings by rule, severity, file, branch |
+| `cartomancer dismiss <scan-id> <index>` | Suppress a false positive by fingerprint |
+| `cartomancer dismissed` | List active dismissals |
+| `cartomancer undismiss <id>` | Remove a dismissal |
+| `cartomancer serve` | Webhook server for automated PR reviews |
+| `cartomancer doctor` | Validate dependencies and config |
+
+All commands accept `--format text|json`.
+
+## How severity escalation works
+
+Findings auto-upgrade based on where they sit in your codebase:
+
+| Condition | Effect |
+|-----------|--------|
+| Blast radius >= 4x threshold | **Critical** |
+| Blast radius >= threshold | Error (minimum) |
+| Domain: `auth` or `payment` | **Critical** |
+| Callers >= 10 | Error (minimum) |
+| Per-rule `min_severity` | Floor before escalation |
+| Per-rule `max_severity` | Ceiling after escalation |
+
+Default `blast_radius_threshold` = 5. Configurable in `.cartomancer.toml`.
+
+## Configuration
+
+Cartomancer works with zero configuration. Optionally, place `.cartomancer.toml` at your project root:
+
+```toml
+[opengrep]
+rules_dir = ".cartomancer/rules"     # custom YAML rules
+enclosing_context = true             # include function body in LLM prompt
+taint_intrafile = true               # cross-function taint analysis
+
+[llm]
+provider = "ollama"                  # "ollama" or "anthropic"
+deepening_threshold = "error"        # minimum severity for LLM
+
+[graph]
+blast_radius_threshold = 5
+
+[knowledge]
+file = ".cartomancer/knowledge.md"   # team context injected into LLM prompts
+system_prompt = "You are reviewing a fintech codebase."
+
+[knowledge.rules.sql-injection]
+min_severity = "error"
+always_deepen = true                 # always run LLM for this rule
+```
+
+Environment variables: `GITHUB_TOKEN`, `ANTHROPIC_API_KEY`, `RUST_LOG`.
 
 ## Architecture
 
 ```text
-GitHub webhook → fetch diff → opengrep scan → cartog enrich
-  → escalate severity → LLM deepen (conditional: analysis + suggested fix + agent prompt)
-  → regression check → dismiss filter → persist + post categorized comments
+cartomancer-server (binary)
+├── cartomancer-core     — domain types (Finding, Severity, config)
+├── cartomancer-graph    — cartog enricher + severity escalator
+├── cartomancer-github   — GitHub API client + webhook types
+└── cartomancer-store    — SQLite persistence (scans, findings, dismissals)
 ```
-
-## Prerequisites
-
-| Tool | Version | Required | Install |
-|------|---------|----------|---------|
-| Rust | 1.77+ | Yes | [rustup.rs](https://rustup.rs/) |
-| Opengrep CLI | latest | Yes | [install script](https://github.com/opengrep/opengrep#install) or [GitHub releases](https://github.com/opengrep/opengrep/releases) |
-| cartog | 0.10+ | Recommended | `cargo install cartog` (for graph enrichment) |
-| Ollama | any | Optional | [ollama.com](https://ollama.com/) (for local LLM deepening) |
-
-Opengrep must be in your `PATH`. Without it, Cartomancer cannot run.
-
-## Quickstart
-
-```bash
-# Build
-cargo build --release
-
-# Check that all dependencies and config are healthy
-cartomancer doctor
-
-# Scan a local directory (no GitHub token needed)
-cartomancer scan /path/to/project
-
-# With cartog graph enrichment (recommended)
-cd /path/to/project
-cartog index .
-cartomancer scan .
-
-# With LLM deepening (Ollama, local)
-ollama pull gemma4
-cartomancer scan .  # critical findings get AI analysis
-
-# Configure (for GitHub PR reviews)
-cp .cartomancer.toml .cartomancer.local.toml
-# Edit .cartomancer.local.toml with your GitHub token
-
-# Review a PR (one-shot)
-cartomancer review owner/repo 42
-
-# Browse scan history
-cartomancer history
-
-# Browse findings from a scan
-cartomancer findings 1
-
-# Search findings across all scans
-cartomancer findings --rule sql --severity error
-
-# Dismiss a false positive (finding #3 from scan 1)
-cartomancer dismiss 1 3 --reason "false positive"
-
-# List and remove dismissals
-cartomancer dismissed
-cartomancer undismiss 1
-
-# Start webhook server
-cartomancer serve --port 3000
-```
-
-## Configuration
-
-See [.cartomancer.toml](.cartomancer.toml) for the full config reference.
-
-Key environment variables:
-- `GITHUB_TOKEN` — GitHub API token
-- `ANTHROPIC_API_KEY` — Anthropic API key (when using `provider = "anthropic"`)
-- `CARTOMANCER_CONFIG` — Config file path (default: `.cartomancer.toml`)
-
-## Crate Structure
-
-| Crate | Role |
-|-------|------|
-| `cartomancer-core` | Domain model: Finding, Severity, GraphContext, config types |
-| `cartomancer-graph` | cartog integration + severity escalation (the moat) |
-| `cartomancer-github` | GitHub API: diff fetch, PR comments, webhook parsing |
-| `cartomancer-store` | SQLite persistence: scan history, finding storage, dismissals |
-| `cartomancer-server` | Binary: pipeline orchestration, CLI, webhook, LLM providers |
-
-See [docs/structure.md](docs/structure.md) for the full layout.
 
 ## Development
 
@@ -106,11 +164,12 @@ See [docs/structure.md](docs/structure.md) for the full layout.
 cargo check --workspace          # type check
 cargo test --workspace           # run tests
 cargo clippy --all-targets       # lint
-cargo fmt                        # format
+cargo fmt --check                # format check
 ```
 
 ## Documentation
 
+- [Website](https://jrollin.github.io/cartomancer/) — landing page + full docs
 - [docs/product.md](docs/product.md) — purpose, users, positioning
 - [docs/tech.md](docs/tech.md) — stack, dependencies, constraints
 - [docs/structure.md](docs/structure.md) — file organization, crate responsibilities
