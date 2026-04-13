@@ -315,7 +315,7 @@ async fn cmd_scan(
             }
         }
     } else {
-        info!("no .cartog.db found, skipping graph enrichment (run `cartog index .` first)");
+        info!(path = %db_path.display(), "cartog database not found, skipping graph enrichment (run `cartog index .` first)");
     }
 
     // 3. Escalate severity

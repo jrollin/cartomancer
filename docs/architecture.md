@@ -32,8 +32,8 @@ cartomancer doctor                             Check dependencies and config hea
 
 Stages 4-7 are shared between `scan` and `review` commands.
 Stages 8-9 are review-only. Stage 10 runs for both scan and review.
-Stages 1-7 persist progress to the store after each stage (schema v5) for resumability.
-The `prepared` checkpoint (after stage 3) enables `--resume` to skip clone on scan crash.
+
+Pipeline progress is persisted at coarse checkpoint stages, not after every numbered step. The checkpoints are: `prepared` (after steps 1-3: metadata + clone + diff), `scanned` (after step 4), `enriched` (after step 5), `escalated` (after step 6), `deepened` (after step 7), and `completed` (after step 11). `--resume` restarts from the last successful checkpoint. `--dry-run` skips step 11 (Post).
 
 ## Data Flow
 

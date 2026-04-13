@@ -338,6 +338,11 @@ impl AppConfig {
         if self.severity.impact_depth == 0 || self.severity.impact_depth > 20 {
             errors.push("severity.impact_depth must be between 1 and 20".into());
         }
+        if self.severity.cartog_db_path.is_empty() {
+            errors.push(
+                "severity.cartog_db_path must not be empty (defaults to \".cartog.db\")".into(),
+            );
+        }
 
         if self.llm.max_tokens == 0 || self.llm.max_tokens > 128_000 {
             errors.push("llm.max_tokens must be between 1 and 128000".into());
@@ -700,6 +705,17 @@ max_severity = "critical"
             let err = config.validate().unwrap_err();
             assert!(
                 err.contains("max_concurrent_deepening must be > 0"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn empty_cartog_db_path_rejected() {
+            let mut config = AppConfig::default();
+            config.severity.cartog_db_path = String::new();
+            let err = config.validate().unwrap_err();
+            assert!(
+                err.contains("cartog_db_path must not be empty"),
                 "got: {err}"
             );
         }

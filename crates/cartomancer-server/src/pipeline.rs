@@ -196,26 +196,38 @@ pub async fn run_pipeline(
     let (work_path, temp_dir, diff) = if start_stage < PipelineStage::Prepared {
         // Resolve work-dir: explicit --work-dir flag wins, otherwise fresh clone
         let (work_path, temp_dir) = prepare_work_dir(repo, token, work_dir)?;
-        let work_str = work_path.to_string_lossy();
 
-        // Persist work_dir path for resume
-        if let (Some(id), Some(ref s)) = (scan_id, &store) {
-            if let Err(e) = s.update_scan_work_dir(id, &work_str) {
-                warn!(err = %e, "failed to persist work_dir");
-            }
+        if let Err(e) = prepare_pr_commits(&work_path, &pr_meta) {
+            record_failure(&store, scan_id, "prepared", &e);
+            return Err(e);
         }
 
-        prepare_pr_commits(&work_path, &pr_meta)?;
-
-        info!("fetching PR diff");
-        let raw_diff = github.fetch_diff(repo, pr_number).await?;
-        let diff = parse_diff(&raw_diff)?;
+        let diff = match async {
+            info!("fetching PR diff");
+            let raw_diff = github.fetch_diff(repo, pr_number).await?;
+            parse_diff(&raw_diff)
+        }
+        .await
+        {
+            Ok(d) => d,
+            Err(e) => {
+                record_failure(&store, scan_id, "prepared", &e);
+                return Err(e);
+            }
+        };
         info!(
             files_changed = diff.files_changed.len(),
             chunks = diff.chunks.len(),
             "diff parsed"
         );
 
+        // Persist work_dir and advance stage only after all prepare operations succeed
+        let work_str = work_path.to_string_lossy();
+        if let (Some(id), Some(ref s)) = (scan_id, &store) {
+            if let Err(e) = s.update_scan_work_dir(id, &work_str) {
+                warn!(err = %e, "failed to persist work_dir");
+            }
+        }
         advance_stage(&store, scan_id, "prepared", &findings);
         (work_path, temp_dir, diff)
     } else {

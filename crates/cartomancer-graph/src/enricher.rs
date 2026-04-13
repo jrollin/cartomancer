@@ -1,6 +1,6 @@
 //! CartogEnricher — wraps cartog Database for blast radius, callers, and impact.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 use cartog::db::Database;
@@ -133,13 +133,10 @@ impl CartogEnricher {
         }
 
         // Step 3: resolve symbol per finding → collect unique symbols
-        // Key: symbol name, Value: (is_public, to be filled with GraphContext later)
-        struct SymbolInfo {
-            is_public: bool,
-        }
-        let mut symbol_map: HashMap<String, SymbolInfo> = HashMap::new();
-        // Track which finding maps to which symbol name
-        let mut finding_symbols: Vec<Option<String>> = Vec::with_capacity(findings.len());
+        // Track unique symbol names for batched impact/refs queries
+        let mut symbol_names: HashSet<String> = HashSet::new();
+        // Per-finding resolved symbol: (name, is_public) — preserves per-finding visibility
+        let mut finding_symbols: Vec<Option<(String, bool)>> = Vec::with_capacity(findings.len());
 
         for finding in findings.iter() {
             let resolved = if let Some(symbols) = outlines.get(&finding.file_path) {
@@ -156,10 +153,8 @@ impl CartogEnricher {
 
             match resolved {
                 Some((name, is_public)) => {
-                    symbol_map
-                        .entry(name.clone())
-                        .or_insert(SymbolInfo { is_public });
-                    finding_symbols.push(Some(name));
+                    symbol_names.insert(name.clone());
+                    finding_symbols.push(Some((name, is_public)));
                 }
                 None => {
                     finding_symbols.push(None);
@@ -167,11 +162,12 @@ impl CartogEnricher {
             }
         }
 
-        // Step 4: impact() + refs() once per unique symbol → build GraphContext
+        // Step 4: impact() + refs() once per unique symbol → build shared context
+        // context_map stores blast_radius, callers, domain_tags — is_public_api is set per-finding
         let mut context_map: HashMap<String, GraphContext> =
-            HashMap::with_capacity(symbol_map.len());
+            HashMap::with_capacity(symbol_names.len());
 
-        for (name, info) in &symbol_map {
+        for name in &symbol_names {
             let blast_radius = match self.db.impact(name, self.impact_depth) {
                 Ok(impact) => impact.len() as u32,
                 Err(e) => {
@@ -201,18 +197,20 @@ impl CartogEnricher {
                     symbol_name: Some(name.clone()),
                     callers,
                     blast_radius,
-                    is_public_api: info.is_public,
+                    is_public_api: false, // placeholder — overridden per-finding below
                     domain_tags,
                 },
             );
         }
 
-        // Step 5: distribute GraphContext back to findings
+        // Step 5: distribute GraphContext back to findings, with per-finding is_public_api
         let mut enriched = 0u32;
-        for (finding, sym_name) in findings.iter_mut().zip(finding_symbols.iter()) {
-            if let Some(name) = sym_name {
+        for (finding, resolved) in findings.iter_mut().zip(finding_symbols.iter()) {
+            if let Some((name, is_public)) = resolved {
                 if let Some(ctx) = context_map.get(name) {
-                    finding.graph_context = Some(ctx.clone());
+                    let mut finding_ctx = ctx.clone();
+                    finding_ctx.is_public_api = *is_public;
+                    finding.graph_context = Some(finding_ctx);
                     enriched += 1;
                 }
             }
@@ -221,7 +219,7 @@ impl CartogEnricher {
         debug!(
             enriched,
             unique_files = unique_files.len(),
-            unique_symbols = symbol_map.len(),
+            unique_symbols = symbol_names.len(),
             "batch enrichment complete"
         );
         Ok(())
@@ -485,5 +483,52 @@ mod tests {
         let enricher = test_enricher();
         let mut findings: Vec<Finding> = vec![];
         enricher.enrich_batch_optimized(&mut findings).unwrap();
+    }
+
+    #[test]
+    fn enrich_batch_optimized_preserves_per_finding_visibility() {
+        // Same symbol name "shared_fn" in two files with different visibility
+        let db = Database::open_memory().unwrap();
+
+        let public_sym = Symbol::new(
+            "shared_fn",
+            SymbolKind::Function,
+            "src/public_mod.rs",
+            1,
+            20,
+            0,
+            400,
+            None,
+        );
+        db.insert_symbol(&public_sym).unwrap();
+
+        let private_sym = Symbol::new(
+            "shared_fn",
+            SymbolKind::Function,
+            "src/private_mod.rs",
+            1,
+            20,
+            0,
+            400,
+            None,
+        )
+        .with_visibility(Visibility::Private);
+        db.insert_symbol(&private_sym).unwrap();
+
+        let enricher = CartogEnricher::from_db(db);
+
+        let mut findings = vec![
+            make_finding("src/public_mod.rs", 10),
+            make_finding("src/private_mod.rs", 10),
+        ];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+
+        let ctx0 = findings[0].graph_context.as_ref().unwrap();
+        let ctx1 = findings[1].graph_context.as_ref().unwrap();
+
+        // Same symbol name, but different visibility per file
+        assert_eq!(ctx0.symbol_name, ctx1.symbol_name);
+        assert!(ctx0.is_public_api, "public_mod finding should be public");
+        assert!(!ctx1.is_public_api, "private_mod finding should be private");
     }
 }
