@@ -28,7 +28,7 @@ use cartomancer_github::client::GitHubClient;
 use cartomancer_graph::enricher::CartogEnricher;
 use cartomancer_graph::escalator::SeverityEscalator;
 
-use crate::cli::{Cli, Command, OutputFormat};
+use crate::cli::{Cli, Command};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,9 +44,11 @@ async fn main() -> Result<()> {
 
     let config = config::load_config(&cli.config)?;
 
+    let json = cli.json;
+
     match cli.command {
-        Command::Doctor { format } => cmd_doctor(&config, &format).await,
-        Command::Scan { path, format } => cmd_scan(&path, &config, &format).await,
+        Command::Doctor => cmd_doctor(&config, json).await,
+        Command::Scan { path } => cmd_scan(&path, &config, json).await,
         Command::Serve { port } => cmd_serve(port, config).await,
         Command::Review {
             repo,
@@ -54,7 +56,6 @@ async fn main() -> Result<()> {
             work_dir,
             dry_run,
             resume,
-            format,
         } => {
             cmd_review(
                 &repo,
@@ -62,42 +63,39 @@ async fn main() -> Result<()> {
                 work_dir.as_deref(),
                 dry_run,
                 resume,
-                &format,
+                json,
                 &config,
             )
             .await
         }
-        Command::History { branch, format } => cmd_history(branch.as_deref(), &format, &config),
+        Command::History { branch } => cmd_history(branch.as_deref(), json, &config),
         Command::Findings {
             scan_id,
             rule,
             severity,
             file,
             branch,
-            format,
-        } => cmd_findings(scan_id, rule, severity, file, branch, &format, &config),
+        } => cmd_findings(scan_id, rule, severity, file, branch, json, &config),
         Command::Dismiss {
             scan_id,
             finding_index,
             reason,
         } => cmd_dismiss(scan_id, finding_index, reason, &config),
-        Command::Dismissed { format } => cmd_dismissed(&format, &config),
+        Command::Dismissed => cmd_dismissed(json, &config),
         Command::Undismiss { dismissal_id } => cmd_undismiss(dismissal_id, &config),
     }
 }
 
-async fn cmd_doctor(
-    config: &cartomancer_core::config::AppConfig,
-    format: &OutputFormat,
-) -> Result<()> {
-    let results = doctor::run_checks(config).await;
+async fn cmd_doctor(config: &cartomancer_core::config::AppConfig, json: bool) -> Result<()> {
+    let report = doctor::run_checks(config).await;
 
-    match format {
-        OutputFormat::Text => doctor::print_text(&results),
-        OutputFormat::Json => doctor::print_json(&results)?,
+    if json {
+        doctor::print_json(&report)?;
+    } else {
+        doctor::print_text(&report);
     }
 
-    if results.iter().any(|r| r.is_fail()) {
+    if report.summary.error > 0 {
         std::process::exit(1);
     }
 
@@ -110,7 +108,7 @@ async fn cmd_review(
     work_dir: Option<&str>,
     dry_run: bool,
     resume_scan_id: Option<i64>,
-    format: &OutputFormat,
+    json: bool,
     config: &cartomancer_core::config::AppConfig,
 ) -> Result<()> {
     // Resolve GitHub token (skip empty/whitespace values)
@@ -168,23 +166,18 @@ async fn cmd_review(
             );
         }
 
-        match format {
-            OutputFormat::Json => {
-                println!("{}", serde_json::to_string_pretty(&result.review)?);
-            }
-            OutputFormat::Text => {
-                if result.review.findings.is_empty() {
-                    println!("{}", result.review.summary);
-                } else {
-                    println!("{}", payload.summary);
-                    println!();
-                    print_findings(&result.review.findings);
-                    if !payload.off_diff_bodies.is_empty() {
-                        println!("\n--- Off-diff findings ---\n");
-                        for body in &payload.off_diff_bodies {
-                            println!("{body}\n");
-                        }
-                    }
+        if json {
+            println!("{}", serde_json::to_string_pretty(&result.review)?);
+        } else if result.review.findings.is_empty() {
+            println!("{}", result.review.summary);
+        } else {
+            println!("{}", payload.summary);
+            println!();
+            print_findings(&result.review.findings);
+            if !payload.off_diff_bodies.is_empty() {
+                println!("\n--- Off-diff findings ---\n");
+                for body in &payload.off_diff_bodies {
+                    println!("{body}\n");
                 }
             }
         }
@@ -246,7 +239,7 @@ async fn shutdown_signal() {
 async fn cmd_scan(
     target_dir: &str,
     config: &cartomancer_core::config::AppConfig,
-    format: &OutputFormat,
+    json: bool,
 ) -> Result<()> {
     let scan_start = Instant::now();
 
@@ -431,13 +424,10 @@ async fn cmd_scan(
     );
 
     // 7. Output
-    match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&findings)?);
-        }
-        OutputFormat::Text => {
-            print_findings(&findings);
-        }
+    if json {
+        println!("{}", serde_json::to_string_pretty(&findings)?);
+    } else {
+        print_findings(&findings);
     }
 
     info!(
@@ -451,7 +441,7 @@ async fn cmd_scan(
 
 fn cmd_history(
     branch: Option<&str>,
-    format: &OutputFormat,
+    json: bool,
     config: &cartomancer_core::config::AppConfig,
 ) -> Result<()> {
     let store = match cartomancer_store::store::Store::open(&config.storage.db_path) {
@@ -473,33 +463,30 @@ fn cmd_history(
         return Ok(());
     }
 
-    match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&scans)?);
-        }
-        OutputFormat::Text => {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&scans)?);
+    } else {
+        println!(
+            "{:<6} {:<20} {:<20} {:<10} {:<8} Command",
+            "ID", "Timestamp", "Branch", "SHA", "Count"
+        );
+        let sep = "-".repeat(80);
+        println!("{sep}");
+        for scan in &scans {
+            let sha_short = if scan.commit_sha.len() > 7 {
+                &scan.commit_sha[..7]
+            } else {
+                &scan.commit_sha
+            };
             println!(
-                "{:<6} {:<20} {:<20} {:<10} {:<8} Command",
-                "ID", "Timestamp", "Branch", "SHA", "Count"
+                "{:<6} {:<20} {:<20} {:<10} {:<8} {}",
+                scan.id.unwrap_or(0),
+                scan.created_at.as_deref().unwrap_or("-"),
+                scan.branch,
+                sha_short,
+                scan.finding_count,
+                scan.command,
             );
-            let sep = "-".repeat(80);
-            println!("{sep}");
-            for scan in &scans {
-                let sha_short = if scan.commit_sha.len() > 7 {
-                    &scan.commit_sha[..7]
-                } else {
-                    &scan.commit_sha
-                };
-                println!(
-                    "{:<6} {:<20} {:<20} {:<10} {:<8} {}",
-                    scan.id.unwrap_or(0),
-                    scan.created_at.as_deref().unwrap_or("-"),
-                    scan.branch,
-                    sha_short,
-                    scan.finding_count,
-                    scan.command,
-                );
-            }
         }
     }
 
@@ -512,7 +499,7 @@ fn cmd_findings(
     severity: Option<String>,
     file: Option<String>,
     branch: Option<String>,
-    format: &OutputFormat,
+    json: bool,
     config: &cartomancer_core::config::AppConfig,
 ) -> Result<()> {
     let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
@@ -540,37 +527,34 @@ fn cmd_findings(
         return Ok(());
     }
 
-    match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&findings)?);
-        }
-        OutputFormat::Text => {
-            for (i, f) in findings.iter().enumerate() {
-                println!(
-                    "{}. [{}] {} ({}:{})",
-                    i + 1,
-                    f.severity.to_uppercase(),
-                    f.rule_id,
-                    f.file_path,
-                    f.start_line,
-                );
-                println!(
-                    "   Scan: {} | Fingerprint: {}…",
-                    f.scan_id,
-                    f.fingerprint.get(..12).unwrap_or(&f.fingerprint)
-                );
-                println!("   {}", f.message);
-                if !f.snippet.is_empty() {
-                    println!("   > {}", f.snippet.trim());
-                }
-                if let Some(ref cwe) = f.cwe {
-                    println!("   CWE: {cwe}");
-                }
-                if let Some(ref analysis) = f.llm_analysis {
-                    println!("   Analysis: {}", analysis.trim());
-                }
-                println!();
+    if json {
+        println!("{}", serde_json::to_string_pretty(&findings)?);
+    } else {
+        for (i, f) in findings.iter().enumerate() {
+            println!(
+                "{}. [{}] {} ({}:{})",
+                i + 1,
+                f.severity.to_uppercase(),
+                f.rule_id,
+                f.file_path,
+                f.start_line,
+            );
+            println!(
+                "   Scan: {} | Fingerprint: {}…",
+                f.scan_id,
+                f.fingerprint.get(..12).unwrap_or(&f.fingerprint)
+            );
+            println!("   {}", f.message);
+            if !f.snippet.is_empty() {
+                println!("   > {}", f.snippet.trim());
             }
+            if let Some(ref cwe) = f.cwe {
+                println!("   CWE: {cwe}");
+            }
+            if let Some(ref analysis) = f.llm_analysis {
+                println!("   Analysis: {}", analysis.trim());
+            }
+            println!();
         }
     }
 
@@ -618,10 +602,7 @@ fn cmd_dismiss(
     Ok(())
 }
 
-fn cmd_dismissed(
-    format: &OutputFormat,
-    config: &cartomancer_core::config::AppConfig,
-) -> Result<()> {
+fn cmd_dismissed(json: bool, config: &cartomancer_core::config::AppConfig) -> Result<()> {
     let store = cartomancer_store::store::Store::open(&config.storage.db_path)?;
     let dismissals = store.list_dismissals()?;
 
@@ -630,27 +611,24 @@ fn cmd_dismissed(
         return Ok(());
     }
 
-    match format {
-        OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&dismissals)?);
-        }
-        OutputFormat::Text => {
+    if json {
+        println!("{}", serde_json::to_string_pretty(&dismissals)?);
+    } else {
+        println!(
+            "{:<6} {:<30} {:<30} {:<20} Reason",
+            "ID", "Rule", "File", "Dismissed At"
+        );
+        let sep = "-".repeat(100);
+        println!("{sep}");
+        for d in &dismissals {
             println!(
-                "{:<6} {:<30} {:<30} {:<20} Reason",
-                "ID", "Rule", "File", "Dismissed At"
+                "{:<6} {:<30} {:<30} {:<20} {}",
+                d.id.unwrap_or(0),
+                &d.rule_id,
+                &d.file_path,
+                d.created_at.as_deref().unwrap_or("-"),
+                d.reason.as_deref().unwrap_or("-"),
             );
-            let sep = "-".repeat(100);
-            println!("{sep}");
-            for d in &dismissals {
-                println!(
-                    "{:<6} {:<30} {:<30} {:<20} {}",
-                    d.id.unwrap_or(0),
-                    &d.rule_id,
-                    &d.file_path,
-                    d.created_at.as_deref().unwrap_or("-"),
-                    d.reason.as_deref().unwrap_or("-"),
-                );
-            }
         }
     }
 

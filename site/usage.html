@@ -92,7 +92,7 @@
     <main class="docs-content">
 
       <p style="margin-bottom: 24px;">
-        <span class="badge">v0.6.0</span>
+        <span class="badge">v0.7.0</span>
         <a href="https://github.com/jrollin/cartomancer/releases/latest" style="margin-left: 8px; font-size: 13px;">View changelog &rarr;</a>
       </p>
 
@@ -139,8 +139,7 @@ cartomancer review your-org/your-repo 123</pre>
       <h2 id="cmd-scan"><code>cartomancer scan &lt;path&gt;</code></h2>
       <p>Run opengrep on a local directory. No GitHub, no PR — useful for local development or CI pipelines.</p>
       <pre>cartomancer scan .                       <span class="comment"># scan current directory</span>
-cartomancer scan src/ --format json       <span class="comment"># JSON output</span>
-cartomancer scan . --format text          <span class="comment"># human-readable (default)</span></pre>
+cartomancer scan src/ --json              <span class="comment"># JSON output</span></pre>
       <p>Findings are enriched with cartog blast radius and persisted to the local store.</p>
 
       <h2 id="cmd-review"><code>cartomancer review &lt;owner/repo&gt; &lt;pr&gt;</code></h2>
@@ -149,20 +148,19 @@ cartomancer scan . --format text          <span class="comment"># human-readable
 cartomancer review acme/api 42 --dry-run           <span class="comment"># preview without posting</span>
 cartomancer review acme/api 42 --work-dir ./repo   <span class="comment"># reuse checkout</span>
 cartomancer review acme/api 42 --resume abc123     <span class="comment"># resume from last stage</span>
-cartomancer review acme/api 42 --format json       <span class="comment"># JSON output</span></pre>
+cartomancer --json review acme/api 42              <span class="comment"># JSON output</span></pre>
       <p>Flags:</p>
       <ul>
         <li><code>--dry-run</code> — output ReviewResult to stdout, skip posting to GitHub</li>
         <li><code>--work-dir &lt;path&gt;</code> — use an existing directory instead of cloning to temp</li>
         <li><code>--resume &lt;scan-id&gt;</code> — resume a previously failed scan from its last completed stage</li>
-        <li><code>--format text|json</code> — output format (default: text)</li>
       </ul>
 
       <h2 id="cmd-history"><code>cartomancer history</code></h2>
       <p>Browse past scan results stored in the local database.</p>
       <pre>cartomancer history                       <span class="comment"># all scans</span>
 cartomancer history --branch main          <span class="comment"># filter by branch</span>
-cartomancer history --format json          <span class="comment"># JSON output</span></pre>
+cartomancer history --json                 <span class="comment"># JSON output</span></pre>
 
       <h2 id="cmd-findings"><code>cartomancer findings</code></h2>
       <p>Search and filter findings across scans.</p>
@@ -180,7 +178,7 @@ cartomancer findings --branch feature/auth           <span class="comment"># by 
 
       <h2 id="cmd-dismissed"><code>cartomancer dismissed</code></h2>
       <p>List all active dismissals.</p>
-      <pre>cartomancer dismissed --format json</pre>
+      <pre>cartomancer dismissed --json</pre>
 
       <h2 id="cmd-undismiss"><code>cartomancer undismiss &lt;dismissal-id&gt;</code></h2>
       <p>Remove a dismissal, allowing the finding to appear again.</p>
@@ -195,7 +193,7 @@ cartomancer serve --port 8080             <span class="comment"># custom port</s
       <h2 id="cmd-doctor"><code>cartomancer doctor</code></h2>
       <p>Validate that all dependencies and configuration are correct.</p>
       <pre>cartomancer doctor                        <span class="comment"># human-readable</span>
-cartomancer doctor --format json          <span class="comment"># structured output</span></pre>
+cartomancer doctor --json                 <span class="comment"># structured output</span></pre>
       <p>Checks: opengrep in PATH, GitHub token, LLM provider, database, custom rules directory, knowledge file.</p>
 
       <!-- Configuration -->
@@ -443,7 +441,7 @@ max_severity = "info"               <span class="comment"># cap at info, never e
 <footer class="footer">
   <div class="container">
     <div class="footer-inner">
-      <span>Cartomancer &middot; MIT License &middot; v0.6.0</span>
+      <span>Cartomancer &middot; MIT License &middot; v0.7.0</span>
       <ul class="footer-links">
         <li><a href="https://github.com/jrollin/cartomancer">GitHub</a></li>
         <li><a href="https://crates.io/crates/cartomancer">crates.io</a></li>

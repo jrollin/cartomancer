@@ -1,143 +1,153 @@
 //! Doctor command — verify that all dependencies and configuration are healthy.
 
-use std::fmt;
 use std::time::Duration;
 
 use anyhow::Result;
+use serde::Serialize;
 
 use cartomancer_core::config::AppConfig;
 
 /// Result of a single doctor check.
+#[derive(Serialize)]
 pub struct CheckResult {
     pub name: &'static str,
     pub status: CheckStatus,
-    pub detail: String,
+    pub message: String,
 }
 
 /// Outcome of a single doctor check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum CheckStatus {
     /// Check passed.
     Ok,
     /// Non-blocking issue (e.g. optional dependency missing).
     Warn,
     /// Blocking failure — the tool cannot operate correctly.
-    Fail,
+    Error,
 }
 
-impl fmt::Display for CheckStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl CheckStatus {
+    fn icon(self) -> &'static str {
         match self {
-            CheckStatus::Ok => write!(f, "ok"),
-            CheckStatus::Warn => write!(f, "warn"),
-            CheckStatus::Fail => write!(f, "FAIL"),
+            CheckStatus::Ok => "+",
+            CheckStatus::Warn => "!",
+            CheckStatus::Error => "x",
         }
     }
+}
+
+/// Structured doctor report with summary counts.
+#[derive(Serialize)]
+pub struct DoctorReport {
+    pub checks: Vec<CheckResult>,
+    pub summary: DoctorSummary,
+}
+
+#[derive(Serialize)]
+pub struct DoctorSummary {
+    pub total: usize,
+    pub ok: usize,
+    pub warn: usize,
+    pub error: usize,
 }
 
 impl CheckResult {
-    /// Build a passing check result.
-    fn ok(name: &'static str, detail: impl Into<String>) -> Self {
+    fn ok(name: &'static str, message: impl Into<String>) -> Self {
         Self {
             name,
             status: CheckStatus::Ok,
-            detail: detail.into(),
+            message: message.into(),
         }
     }
 
-    /// Build a warning check result (non-blocking).
-    fn warn(name: &'static str, detail: impl Into<String>) -> Self {
+    fn warn(name: &'static str, message: impl Into<String>) -> Self {
         Self {
             name,
             status: CheckStatus::Warn,
-            detail: detail.into(),
+            message: message.into(),
         }
     }
 
-    /// Build a failing check result (blocks operation).
-    fn fail(name: &'static str, detail: impl Into<String>) -> Self {
+    fn fail(name: &'static str, message: impl Into<String>) -> Self {
         Self {
             name,
-            status: CheckStatus::Fail,
-            detail: detail.into(),
+            status: CheckStatus::Error,
+            message: message.into(),
         }
-    }
-
-    /// Text icon for checklist display: `[+]`, `[~]`, or `[-]`.
-    fn icon(&self) -> &'static str {
-        match self.status {
-            CheckStatus::Ok => "[+]",
-            CheckStatus::Warn => "[~]",
-            CheckStatus::Fail => "[-]",
-        }
-    }
-
-    /// Returns `true` when the check status is `Fail`.
-    pub fn is_fail(&self) -> bool {
-        matches!(self.status, CheckStatus::Fail)
     }
 }
 
-/// Run all doctor checks and return the results.
-pub async fn run_checks(config: &AppConfig) -> Vec<CheckResult> {
-    let mut results = Vec::new();
+/// Run all doctor checks and return a structured report.
+pub async fn run_checks(config: &AppConfig) -> DoctorReport {
+    let checks = vec![
+        check_config(config),
+        check_opengrep().await,
+        check_custom_rules(config),
+        check_knowledge(config),
+        check_cartog(),
+        check_github_token(config),
+        check_llm_provider(config).await,
+        check_storage(config),
+    ];
 
-    results.push(check_config(config));
-    results.push(check_opengrep().await);
-    results.push(check_custom_rules(config));
-    results.push(check_knowledge(config));
-    results.push(check_cartog());
-    results.push(check_github_token(config));
-    results.push(check_llm_provider(config).await);
-    results.push(check_storage(config));
-
-    results
+    build_report(checks)
 }
 
-/// Print results as a text checklist.
-pub fn print_text(results: &[CheckResult]) {
-    println!("Cartomancer Doctor\n");
-    for r in results {
-        println!("  {} {:<20} {}", r.icon(), r.name, r.detail);
-    }
-
-    let failures = results.iter().filter(|r| r.is_fail()).count();
-    let warnings = results
+fn build_report(checks: Vec<CheckResult>) -> DoctorReport {
+    let ok = checks
         .iter()
-        .filter(|r| matches!(r.status, CheckStatus::Warn))
+        .filter(|c| c.status == CheckStatus::Ok)
+        .count();
+    let warn = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Warn)
+        .count();
+    let error = checks
+        .iter()
+        .filter(|c| c.status == CheckStatus::Error)
         .count();
 
-    println!();
-    if failures > 0 {
-        println!(
-            "{} check(s) failed, {} warning(s). Fix the failures above before running.",
-            failures, warnings
-        );
-    } else if warnings > 0 {
-        println!("All checks passed with {} warning(s).", warnings);
-    } else {
-        println!("All checks passed.");
+    DoctorReport {
+        summary: DoctorSummary {
+            total: checks.len(),
+            ok,
+            warn,
+            error,
+        },
+        checks,
     }
 }
 
-/// Print results as JSON.
-pub fn print_json(results: &[CheckResult]) -> Result<()> {
-    let items: Vec<serde_json::Value> = results
-        .iter()
-        .map(|r| {
-            serde_json::json!({
-                "name": r.name,
-                "status": r.status.to_string(),
-                "detail": r.detail,
-            })
-        })
-        .collect();
+/// Print report as a text checklist.
+pub fn print_text(report: &DoctorReport) {
+    println!("Cartomancer Doctor\n");
+    for check in &report.checks {
+        println!(
+            "  [{}] {}: {}",
+            check.status.icon(),
+            check.name,
+            check.message
+        );
+    }
 
-    let has_failure = results.iter().any(|r| r.is_fail());
-    let output = serde_json::json!({
-        "checks": items,
-        "ok": !has_failure,
-    });
-    println!("{}", serde_json::to_string_pretty(&output)?);
+    println!();
+    let s = &report.summary;
+    if s.error > 0 {
+        println!(
+            "{} checks passed, {} warnings, {} errors",
+            s.ok, s.warn, s.error
+        );
+    } else if s.warn > 0 {
+        println!("{} checks passed, {} warnings", s.ok, s.warn);
+    } else {
+        println!("All {} checks passed", s.ok);
+    }
+}
+
+/// Print report as JSON.
+pub fn print_json(report: &DoctorReport) -> Result<()> {
+    println!("{}", serde_json::to_string_pretty(report)?);
     Ok(())
 }
 
@@ -395,24 +405,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn check_result_icon_mapping() {
-        assert_eq!(CheckResult::ok("t", "").icon(), "[+]");
-        assert_eq!(CheckResult::warn("t", "").icon(), "[~]");
-        assert_eq!(CheckResult::fail("t", "").icon(), "[-]");
+    fn check_status_icon_mapping() {
+        assert_eq!(CheckStatus::Ok.icon(), "+");
+        assert_eq!(CheckStatus::Warn.icon(), "!");
+        assert_eq!(CheckStatus::Error.icon(), "x");
     }
 
     #[test]
-    fn check_result_is_fail() {
-        assert!(!CheckResult::ok("t", "").is_fail());
-        assert!(!CheckResult::warn("t", "").is_fail());
-        assert!(CheckResult::fail("t", "").is_fail());
+    fn check_result_status() {
+        assert_eq!(CheckResult::ok("t", "").status, CheckStatus::Ok);
+        assert_eq!(CheckResult::warn("t", "").status, CheckStatus::Warn);
+        assert_eq!(CheckResult::fail("t", "").status, CheckStatus::Error);
     }
 
     #[test]
     fn check_config_valid_default() {
         let config = AppConfig::default();
         let result = check_config(&config);
-        assert!(matches!(result.status, CheckStatus::Ok));
+        assert_eq!(result.status, CheckStatus::Ok);
     }
 
     #[test]
@@ -429,8 +439,8 @@ mod tests {
             None => std::env::remove_var("GITHUB_TOKEN"),
         }
 
-        assert!(matches!(result.status, CheckStatus::Warn));
-        assert!(result.detail.contains("not set"));
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.message.contains("not set"));
     }
 
     #[test]
@@ -438,7 +448,7 @@ mod tests {
         let mut config = AppConfig::default();
         config.github.token = Some("ghp_test".into());
         let result = check_github_token(&config);
-        assert!(matches!(result.status, CheckStatus::Ok));
+        assert_eq!(result.status, CheckStatus::Ok);
     }
 
     #[test]
@@ -446,25 +456,43 @@ mod tests {
         let mut config = AppConfig::default();
         config.storage.db_path = ":memory:".into();
         let result = check_storage(&config);
-        assert!(matches!(result.status, CheckStatus::Ok));
+        assert_eq!(result.status, CheckStatus::Ok);
     }
 
     #[test]
     fn check_storage_bad_path() {
         let tmp = tempfile::tempdir().unwrap();
         let mut config = AppConfig::default();
-        // Point db_path at the directory itself — SQLite cannot open a directory
         config.storage.db_path = tmp.path().to_string_lossy().into_owned();
         let result = check_storage(&config);
-        // Keep tmp alive until after the assertion
         drop(tmp);
-        assert!(matches!(result.status, CheckStatus::Fail));
+        assert_eq!(result.status, CheckStatus::Error);
     }
 
     #[test]
-    fn check_status_display() {
-        assert_eq!(format!("{}", CheckStatus::Ok), "ok");
-        assert_eq!(format!("{}", CheckStatus::Warn), "warn");
-        assert_eq!(format!("{}", CheckStatus::Fail), "FAIL");
+    fn build_report_summary_counts() {
+        let checks = vec![
+            CheckResult::ok("a", "ok"),
+            CheckResult::warn("b", "warning"),
+            CheckResult::fail("c", "error"),
+        ];
+        let report = build_report(checks);
+        assert_eq!(report.summary.total, 3);
+        assert_eq!(report.summary.ok, 1);
+        assert_eq!(report.summary.warn, 1);
+        assert_eq!(report.summary.error, 1);
+    }
+
+    #[test]
+    fn check_status_serializes_lowercase() {
+        assert_eq!(serde_json::to_string(&CheckStatus::Ok).unwrap(), "\"ok\"");
+        assert_eq!(
+            serde_json::to_string(&CheckStatus::Warn).unwrap(),
+            "\"warn\""
+        );
+        assert_eq!(
+            serde_json::to_string(&CheckStatus::Error).unwrap(),
+            "\"error\""
+        );
     }
 }

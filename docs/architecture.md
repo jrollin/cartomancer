@@ -2,6 +2,8 @@
 
 ## Entry Points
 
+Global flags: `--json` (machine-readable output), `--config <path>` (default: `.cartomancer.toml`).
+
 ```
 cartomancer scan <path>                        Local scan, no GitHub
 cartomancer review <owner/repo> <pr>           One-shot PR review via CLI
