@@ -50,19 +50,23 @@ cartomancer-server (binary)
 - `ScanRecord` / `StoredFinding` / `Dismissal` (store::types) — persistence DTOs
 - `CommentCategory` (server::comment) — Actionable or Nitpick (display concern, not on Finding)
 - `PipelineResult` (server::pipeline) — ReviewResult + parsed diff + branch info + scan duration + rule count + temp dir handle
+- `DoctorReport` (server::doctor) — structured report: checks + summary (total/ok/warn/error)
+- `CheckResult` / `CheckStatus` (server::doctor) — individual check outcome (Ok/Warn/Error)
 
 ## CLI Commands
 
+Global flags: `--json` (output as JSON), `--config <path>` (default: `.cartomancer.toml`).
+
 ```
-cartomancer scan <path> [--format text|json]
-cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--resume <scan-id>] [--format text|json]
-cartomancer history [--branch <name>] [--format text|json]
-cartomancer findings [<scan-id>] [--rule <pat>] [--severity <lvl>] [--file <pat>] [--branch <name>] [--format text|json]
+cartomancer scan <path>
+cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--resume <scan-id>]
+cartomancer history [--branch <name>]
+cartomancer findings [<scan-id>] [--rule <pat>] [--severity <lvl>] [--file <pat>] [--branch <name>]
 cartomancer dismiss <scan-id> <finding-index> [--reason <text>]
-cartomancer dismissed [--format text|json]
+cartomancer dismissed
 cartomancer undismiss <dismissal-id>
 cartomancer serve [--port <n>]                    # webhook server for GitHub events
-cartomancer doctor [--format text|json]           # check dependencies and config health
+cartomancer doctor                                # check dependencies and config health
 ```
 
 ## Review Pipeline Stages

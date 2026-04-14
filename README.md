@@ -103,7 +103,7 @@ export ANTHROPIC_API_KEY=sk-...
 | `cartomancer serve` | Webhook server for automated PR reviews |
 | `cartomancer doctor` | Validate dependencies and config |
 
-All commands accept `--format text|json`.
+All commands accept `--json` for machine-readable output.
 
 ## How severity escalation works
 

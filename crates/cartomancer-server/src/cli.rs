@@ -15,6 +15,10 @@ pub struct Cli {
     /// Path to config file
     #[arg(long, env = "CARTOMANCER_CONFIG", default_value = ".cartomancer.toml")]
     pub config: String,
+
+    /// Output as JSON
+    #[arg(long, global = true)]
+    pub json: bool,
 }
 
 #[derive(Subcommand)]
@@ -24,10 +28,6 @@ pub enum Command {
         /// Directory to scan (default: current directory)
         #[arg(default_value = ".")]
         path: String,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
     },
     /// Start the webhook server
     Serve {
@@ -40,10 +40,6 @@ pub enum Command {
         /// Filter by branch name
         #[arg(long)]
         branch: Option<String>,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
     },
     /// Browse findings for a scan or search across scans
     Findings {
@@ -65,10 +61,6 @@ pub enum Command {
         /// Filter by branch name
         #[arg(long)]
         branch: Option<String>,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
     },
     /// Dismiss a finding as false positive
     Dismiss {
@@ -83,22 +75,14 @@ pub enum Command {
         reason: Option<String>,
     },
     /// List all dismissed findings
-    Dismissed {
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-    },
+    Dismissed,
     /// Remove a dismissal
     Undismiss {
         /// Dismissal ID (from dismissed output)
         dismissal_id: i64,
     },
     /// Check that all dependencies and configuration are valid
-    Doctor {
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
-    },
+    Doctor,
     /// Review a GitHub PR (one-shot mode)
     Review {
         /// Repository (owner/repo)
@@ -119,23 +103,31 @@ pub enum Command {
         /// Resume a previously failed scan from its last completed stage
         #[arg(long)]
         resume: Option<i64>,
-
-        /// Output format
-        #[arg(long, default_value = "text")]
-        format: OutputFormat,
     },
-}
-
-#[derive(Debug, Clone, clap::ValueEnum)]
-pub enum OutputFormat {
-    Text,
-    Json,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use clap::Parser;
+
+    #[test]
+    fn cli_json_defaults_to_false() {
+        let cli = Cli::try_parse_from(["cartomancer", "doctor"]).unwrap();
+        assert!(!cli.json);
+    }
+
+    #[test]
+    fn cli_json_global_flag() {
+        let cli = Cli::try_parse_from(["cartomancer", "--json", "doctor"]).unwrap();
+        assert!(cli.json);
+    }
+
+    #[test]
+    fn cli_json_after_subcommand() {
+        let cli = Cli::try_parse_from(["cartomancer", "doctor", "--json"]).unwrap();
+        assert!(cli.json);
+    }
 
     #[test]
     fn cli_parse_review_minimal() {
@@ -147,13 +139,13 @@ mod tests {
                 work_dir,
                 dry_run,
                 resume,
-                ..
             } => {
                 assert_eq!(repo, "owner/repo");
                 assert_eq!(pr, 42);
                 assert!(work_dir.is_none());
                 assert!(!dry_run);
                 assert!(resume.is_none());
+                assert!(!cli.json);
             }
             _ => panic!("expected Review command"),
         }
@@ -163,6 +155,7 @@ mod tests {
     fn cli_parse_review_with_all_flags() {
         let cli = Cli::try_parse_from([
             "cartomancer",
+            "--json",
             "review",
             "owner/repo",
             "7",
@@ -171,8 +164,6 @@ mod tests {
             "--dry-run",
             "--resume",
             "42",
-            "--format",
-            "json",
         ])
         .unwrap();
         match cli.command {
@@ -182,32 +173,32 @@ mod tests {
                 work_dir,
                 dry_run,
                 resume,
-                format,
             } => {
                 assert_eq!(repo, "owner/repo");
                 assert_eq!(pr, 7);
                 assert_eq!(work_dir.as_deref(), Some("/tmp/repo"));
                 assert!(dry_run);
                 assert_eq!(resume, Some(42));
-                assert!(matches!(format, OutputFormat::Json));
+                assert!(cli.json);
             }
             _ => panic!("expected Review command"),
         }
     }
 
     #[test]
-    fn cli_parse_scan_still_works() {
-        let cli = Cli::try_parse_from(["cartomancer", "scan", ".", "--format", "json"]).unwrap();
+    fn cli_parse_scan_with_json() {
+        let cli = Cli::try_parse_from(["cartomancer", "scan", ".", "--json"]).unwrap();
         assert!(matches!(cli.command, Command::Scan { .. }));
+        assert!(cli.json);
     }
 
     #[test]
     fn cli_parse_history_defaults() {
         let cli = Cli::try_parse_from(["cartomancer", "history"]).unwrap();
         match cli.command {
-            Command::History { branch, format } => {
+            Command::History { branch } => {
                 assert!(branch.is_none());
-                assert!(matches!(format, OutputFormat::Text));
+                assert!(!cli.json);
             }
             _ => panic!("expected History command"),
         }
@@ -215,19 +206,12 @@ mod tests {
 
     #[test]
     fn cli_parse_history_with_branch() {
-        let cli = Cli::try_parse_from([
-            "cartomancer",
-            "history",
-            "--branch",
-            "main",
-            "--format",
-            "json",
-        ])
-        .unwrap();
+        let cli =
+            Cli::try_parse_from(["cartomancer", "history", "--branch", "main", "--json"]).unwrap();
         match cli.command {
-            Command::History { branch, format } => {
+            Command::History { branch } => {
                 assert_eq!(branch.as_deref(), Some("main"));
-                assert!(matches!(format, OutputFormat::Json));
+                assert!(cli.json);
             }
             _ => panic!("expected History command"),
         }
@@ -266,7 +250,6 @@ mod tests {
                 severity,
                 file,
                 branch,
-                ..
             } => {
                 assert!(scan_id.is_none());
                 assert_eq!(rule.as_deref(), Some("sql"));
@@ -305,13 +288,9 @@ mod tests {
 
     #[test]
     fn cli_parse_dismissed() {
-        let cli = Cli::try_parse_from(["cartomancer", "dismissed", "--format", "json"]).unwrap();
-        match cli.command {
-            Command::Dismissed { format } => {
-                assert!(matches!(format, OutputFormat::Json));
-            }
-            _ => panic!("expected Dismissed command"),
-        }
+        let cli = Cli::try_parse_from(["cartomancer", "dismissed", "--json"]).unwrap();
+        assert!(matches!(cli.command, Command::Dismissed));
+        assert!(cli.json);
     }
 
     #[test]
@@ -328,30 +307,20 @@ mod tests {
     #[test]
     fn cli_parse_doctor_defaults() {
         let cli = Cli::try_parse_from(["cartomancer", "doctor"]).unwrap();
-        match cli.command {
-            Command::Doctor { format } => {
-                assert!(matches!(format, OutputFormat::Text));
-            }
-            _ => panic!("expected Doctor command"),
-        }
+        assert!(matches!(cli.command, Command::Doctor));
+        assert!(!cli.json);
     }
 
     #[test]
     fn cli_parse_doctor_json() {
-        let cli = Cli::try_parse_from(["cartomancer", "doctor", "--format", "json"]).unwrap();
-        match cli.command {
-            Command::Doctor { format } => {
-                assert!(matches!(format, OutputFormat::Json));
-            }
-            _ => panic!("expected Doctor command"),
-        }
+        let cli = Cli::try_parse_from(["cartomancer", "doctor", "--json"]).unwrap();
+        assert!(matches!(cli.command, Command::Doctor));
+        assert!(cli.json);
     }
 
     #[test]
     fn cli_review_repo_is_positional() {
-        // repo and pr are positional, not --repo/--pr
         let result = Cli::try_parse_from(["cartomancer", "review", "--repo", "a/b", "--pr", "1"]);
-        // This should fail since repo/pr are now positional
         assert!(result.is_err());
     }
 }
