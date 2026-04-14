@@ -58,6 +58,7 @@ cartomancer/
 │       │   ├── cli.rs                 # clap: scan, review, history, findings, dismiss, dismissed, undismiss, serve
 │       │   ├── comment.rs             # format_inline_comment, format_off_diff_comment, format_summary, classify_finding
 │       │   ├── config.rs
+│       │   ├── doctor.rs              # DoctorReport, CheckResult, CheckStatus, run_checks
 │       │   ├── pipeline.rs            # run_pipeline, persist_scan, annotate_regression, filter_dismissed
 │       │   ├── opengrep.rs            # run_opengrep, discover_custom_rules
 │       │   ├── path_security.rs       # validate_path_within (path traversal protection)
@@ -101,8 +102,9 @@ cartomancer-server
 
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
-| `cli` | Clap argument parsing (scan, review, history, findings, dismiss, dismissed, undismiss, serve) | - |
+| `cli` | Clap argument parsing (scan, review, history, findings, dismiss, dismissed, undismiss, serve, doctor) + global `--json` flag | - |
 | `comment` | Format categorized inline comments (Actionable/Nitpick, collapsible fix + agent prompt), off-diff caution comments, summary with actionable counts | cartomancer-core::finding |
+| `doctor` | Dependency and config health checks with structured `DoctorReport` output (text or JSON via global `--json`) | cartomancer-core::config, cartomancer-store |
 | `config` | TOML config loading | cartomancer-core::config |
 | `pipeline` | Review orchestration + persistence + regression + dismissal filtering | all other modules, cartomancer-store |
 | `opengrep` | Subprocess runner + JSON parsing | cartomancer-core::finding |
