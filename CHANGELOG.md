@@ -1,3 +1,16 @@
+## [0.7.1] - 2026-04-14
+
+### 🚀 Features
+
+- *(cli,doctor)* Replace --format with global --json flag, structured doctor report
+
+### 📚 Documentation
+
+- Update docs and site for global --json flag and v0.7.0
+
+### ⚙️ Miscellaneous Tasks
+
+- Bump version to 0.7.1
 ## [0.7.0] - 2026-04-13
 
 ### 🚀 Features
