@@ -55,7 +55,10 @@ curl -L https://github.com/jrollin/cartomancer/releases/latest/download/cartoman
 sudo mv cartomancer /usr/local/bin/
 # All platforms: https://github.com/jrollin/cartomancer/releases/latest
 
-# Check your setup
+# Scaffold a commented .cartomancer.toml
+cartomancer init
+
+# Check your setup (git, opengrep, cartog db, LLM provider, …)
 cartomancer doctor
 
 # Scan a local directory (no GitHub token needed)
@@ -93,8 +96,9 @@ export ANTHROPIC_API_KEY=sk-...
 
 | Command | Purpose |
 |---------|---------|
+| `cartomancer init [--force]` | Scaffold a commented `.cartomancer.toml` |
 | `cartomancer scan <path>` | Local scan — no GitHub, no PR |
-| `cartomancer review <owner/repo> <pr>` | Full pipeline → GitHub PR comments |
+| `cartomancer review <owner/repo> <pr> [--resume <scan-id>]` | Full pipeline → GitHub PR comments (resume a failed run from its last checkpoint) |
 | `cartomancer history` | Browse past scan results |
 | `cartomancer findings [<scan-id>]` | Search findings by rule, severity, file, branch |
 | `cartomancer dismiss <scan-id> <index>` | Suppress a false positive by fingerprint |
@@ -103,7 +107,11 @@ export ANTHROPIC_API_KEY=sk-...
 | `cartomancer serve` | Webhook server for automated PR reviews |
 | `cartomancer doctor` | Validate dependencies and config |
 
-All commands accept `--json` for machine-readable output.
+All commands accept `--json` for machine-readable output. Empty results emit `[]` / `{}` so pipelines keep working. `scan --json` emits an envelope:
+
+```json
+{ "scan_id": 42, "findings": [...], "summary": { "total": 3, "critical": 1, "error": 1, "warning": 1, "info": 0 } }
+```
 
 ## How severity escalation works
 

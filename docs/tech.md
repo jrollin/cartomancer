@@ -15,8 +15,7 @@ Rust (single binary, performance, native cartog integration).
 | clap | 4 | CLI argument parsing |
 | serde / serde_json / toml | 1 / 1 / 0.8 | Serialization (config TOML, API payloads, opengrep JSON) |
 | tracing / tracing-subscriber | 0.1 / 0.3 | Structured logging |
-| thiserror | 2 | Domain error types |
-| anyhow | 1 | Application error propagation |
+| anyhow | 1 | Error propagation across the workspace |
 | async-trait | 0.1 | Async trait for LLM provider abstraction |
 | rusqlite | 0.39 | SQLite database access (finding persistence) |
 | sha2 | 0.10 | SHA-256 fingerprint computation for finding identity |

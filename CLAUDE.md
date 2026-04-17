@@ -58,7 +58,8 @@ cartomancer-server (binary)
 Global flags: `--json` (output as JSON), `--config <path>` (default: `.cartomancer.toml`).
 
 ```
-cartomancer scan <path>
+cartomancer init [--force]                        # scaffold .cartomancer.toml
+cartomancer scan <path>                           # --json emits {scan_id, findings, summary}
 cartomancer review <owner/repo> <pr> [--work-dir <path>] [--dry-run] [--resume <scan-id>]
 cartomancer history [--branch <name>]
 cartomancer findings [<scan-id>] [--rule <pat>] [--severity <lvl>] [--file <pat>] [--branch <name>]
@@ -68,6 +69,8 @@ cartomancer undismiss <dismissal-id>
 cartomancer serve [--port <n>]                    # webhook server for GitHub events
 cartomancer doctor                                # check dependencies and config health
 ```
+
+Empty results emit `[]` / `{}` when `--json` is set, so shell pipelines stay valid.
 
 ## Review Pipeline Stages
 
@@ -94,7 +97,7 @@ cartomancer doctor                                # check dependencies and confi
 
 ## Conventions
 
-- Error handling: `thiserror` in core, `anyhow` elsewhere
+- Error handling: `anyhow` throughout the workspace
 - Tests: co-located `#[cfg(test)]` for unit, `tests/` for integration
 - Config: `.cartomancer.toml` for defaults, env vars for secrets
 - CI: check, fmt, clippy, test, coverage, audit, secrets scan, deny

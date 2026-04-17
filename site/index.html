@@ -389,9 +389,14 @@ sudo mv cartomancer /usr/local/bin/</pre>
       </div>
       <div class="install-card">
         <h3>Your first review</h3>
-        <pre>export GITHUB_TOKEN=ghp_...
+        <pre><span class="comment"># 1. Scaffold config + verify dependencies</span>
+cartomancer init
+cartomancer doctor
+
+<span class="comment"># 2. Dry run a PR</span>
+export GITHUB_TOKEN=ghp_...
 cartomancer review owner/repo 42 --dry-run</pre>
-        <p><code>--dry-run</code> outputs the review to stdout without posting to GitHub.</p>
+        <p><code>init</code> writes a commented <code>.cartomancer.toml</code>, <code>doctor</code> checks git/opengrep/cartog/LLM, and <code>--dry-run</code> prints the review instead of posting to GitHub.</p>
       </div>
       <div class="install-card">
         <h3>Webhook server</h3>
