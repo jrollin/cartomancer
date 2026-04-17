@@ -31,8 +31,7 @@ cartomancer/
 │   │       ├── finding.rs
 │   │       ├── diff.rs
 │   │       ├── review.rs
-│   │       ├── config.rs
-│   │       └── error.rs
+│   │       └── config.rs
 │   ├── cartomancer-graph/              # cartog + escalation
 │   │   └── src/
 │   │       ├── lib.rs
@@ -54,8 +53,9 @@ cartomancer/
 │   │       └── types.rs               # ScanRecord, StoredFinding, Dismissal, filters
 │   └── cartomancer-server/             # binary: pipeline + CLI
 │       ├── src/
-│       │   ├── main.rs                # entry point: cmd_scan, cmd_review, cmd_history, cmd_findings, cmd_dismiss
-│       │   ├── cli.rs                 # clap: scan, review, history, findings, dismiss, dismissed, undismiss, serve
+│       │   ├── main.rs                # entry point: cmd_init, cmd_scan, cmd_review, cmd_history, cmd_findings, cmd_dismiss
+│       │   ├── init_template.toml     # embedded via include_str! — rendered by `cartomancer init`
+│       │   ├── cli.rs                 # clap: init, scan, review, history, findings, dismiss, dismissed, undismiss, serve, doctor
 │       │   ├── comment.rs             # format_inline_comment, format_off_diff_comment, format_summary, classify_finding
 │       │   ├── config.rs
 │       │   ├── doctor.rs              # DoctorReport, CheckResult, CheckStatus, run_checks
@@ -102,7 +102,7 @@ cartomancer-server
 
 | Module | Responsibility | Dependencies |
 |--------|---------------|--------------|
-| `cli` | Clap argument parsing (scan, review, history, findings, dismiss, dismissed, undismiss, serve, doctor) + global `--json` flag | - |
+| `cli` | Clap argument parsing (init, scan, review, history, findings, dismiss, dismissed, undismiss, serve, doctor) + global `--json` flag | - |
 | `comment` | Format categorized inline comments (Actionable/Nitpick, collapsible fix + agent prompt), off-diff caution comments, summary with actionable counts | cartomancer-core::finding |
 | `doctor` | Dependency and config health checks with structured `DoctorReport` output (text or JSON via global `--json`) | cartomancer-core::config, cartomancer-store |
 | `config` | TOML config loading | cartomancer-core::config |
@@ -113,7 +113,7 @@ cartomancer-server
 
 ## Conventions
 
-- **Error handling**: `thiserror` for domain errors in core, `anyhow` for application propagation elsewhere
+- **Error handling**: `anyhow` throughout the workspace — errors propagate with `Context`, and callers surface them at boundaries (CLI command handlers, webhook HTTP responses)
 - **Visibility**: `pub` items get doc comments, internal items do not
 - **Tests**: co-located `#[cfg(test)] mod tests` for unit tests, `tests/` directory for integration tests
 - **Naming**: kebab-case crate names, snake_case modules and functions

@@ -46,6 +46,7 @@
         </div>
         <div class="sidebar-group">
           <div class="sidebar-label">CLI Reference</div>
+          <a href="#cmd-init">cartomancer init</a>
           <a href="#cmd-scan">cartomancer scan</a>
           <a href="#cmd-review">cartomancer review</a>
           <a href="#cmd-history">cartomancer history</a>
@@ -136,11 +137,22 @@ cartomancer review your-org/your-repo 123</pre>
 
       <!-- CLI Reference -->
 
+      <h2 id="cmd-init"><code>cartomancer init [--force]</code></h2>
+      <p>Scaffold a commented <code>.cartomancer.toml</code> at the configured config path (defaults to the current directory). Fails if the file already exists; pass <code>--force</code> to overwrite.</p>
+      <pre>cartomancer init                          <span class="comment"># writes .cartomancer.toml</span>
+cartomancer init --force                   <span class="comment"># overwrite existing config</span></pre>
+      <p>After init, run <code>cartomancer doctor</code> to validate git, opengrep, cartog, and the configured LLM provider are reachable.</p>
+
       <h2 id="cmd-scan"><code>cartomancer scan &lt;path&gt;</code></h2>
       <p>Run opengrep on a local directory. No GitHub, no PR — useful for local development or CI pipelines.</p>
       <pre>cartomancer scan .                       <span class="comment"># scan current directory</span>
-cartomancer scan src/ --json              <span class="comment"># JSON output</span></pre>
-      <p>Findings are enriched with cartog blast radius and persisted to the local store.</p>
+cartomancer --json scan src/               <span class="comment"># machine-readable output</span></pre>
+      <p>Findings are enriched with cartog blast radius and persisted to the local store. The text output starts with <code>Scan id: N</code> so you can pipe it into <code>dismiss</code> or <code>findings</code>. The <code>--json</code> envelope is:</p>
+      <pre>{
+  "scan_id": 42,
+  "findings": [ /* ... */ ],
+  "summary": { "total": 3, "critical": 1, "error": 1, "warning": 1, "info": 0 }
+}</pre>
 
       <h2 id="cmd-review"><code>cartomancer review &lt;owner/repo&gt; &lt;pr&gt;</code></h2>
       <p>The main command. Runs the full 11-stage pipeline against a GitHub PR.</p>
@@ -157,10 +169,10 @@ cartomancer --json review acme/api 42              <span class="comment"># JSON 
       </ul>
 
       <h2 id="cmd-history"><code>cartomancer history</code></h2>
-      <p>Browse past scan results stored in the local database.</p>
+      <p>Browse past scan results stored in the local database. When <code>--json</code> is set, empty results emit <code>[]</code> (valid JSON for shell pipelines); the same applies to <code>findings</code> and <code>dismissed</code>.</p>
       <pre>cartomancer history                       <span class="comment"># all scans</span>
 cartomancer history --branch main          <span class="comment"># filter by branch</span>
-cartomancer history --json                 <span class="comment"># JSON output</span></pre>
+cartomancer --json history                 <span class="comment"># JSON output</span></pre>
 
       <h2 id="cmd-findings"><code>cartomancer findings</code></h2>
       <p>Search and filter findings across scans.</p>
@@ -191,10 +203,22 @@ cartomancer serve --port 8080             <span class="comment"># custom port</s
       <p>See <a href="#webhook-setup">Webhook Server</a> section for GitHub configuration.</p>
 
       <h2 id="cmd-doctor"><code>cartomancer doctor</code></h2>
-      <p>Validate that all dependencies and configuration are correct.</p>
+      <p>Validate that all dependencies and configuration are correct. Exit code is non-zero when any check reports an error.</p>
       <pre>cartomancer doctor                        <span class="comment"># human-readable</span>
 cartomancer doctor --json                 <span class="comment"># structured output</span></pre>
-      <p>Checks: opengrep in PATH, GitHub token, LLM provider, database, custom rules directory, knowledge file.</p>
+      <p>Checks (error level in parentheses):</p>
+      <ul>
+        <li><code>config</code> <em>(error)</em> — <code>AppConfig::validate()</code> passes</li>
+        <li><code>git</code> <em>(error)</em> — <code>git</code> is in <code>PATH</code> (required for <code>review</code> / <code>serve</code>)</li>
+        <li><code>opengrep</code> <em>(error)</em> — responds to <code>--version</code> within 10s</li>
+        <li><code>custom-rules</code> <em>(warn)</em> — <code>opengrep.rules_dir</code> contains at least one rule file</li>
+        <li><code>knowledge</code> <em>(warn)</em> — knowledge file is readable and within <code>max_knowledge_chars</code></li>
+        <li><code>cartog</code> <em>(warn)</em> — <code>cartog --version</code> succeeds</li>
+        <li><code>cartog-db</code> <em>(warn)</em> — the file at <code>severity.cartog_db_path</code> exists (run <code>cartog index .</code> if missing)</li>
+        <li><code>github-token</code> <em>(warn)</em> — <code>GITHUB_TOKEN</code> env var or <code>github.token</code> is set</li>
+        <li><code>llm-provider</code> <em>(warn)</em> — configured provider responds to a health check</li>
+        <li><code>storage</code> <em>(error)</em> — SQLite store at <code>storage.db_path</code> can be opened</li>
+      </ul>
 
       <!-- Configuration -->
 
@@ -399,7 +423,7 @@ max_severity = "info"               <span class="comment"># cap at info, never e
   |-- cartomancer-graph    cartog enricher + severity escalator
   |-- cartomancer-github   GitHub API client + webhook types
   |-- cartomancer-store    SQLite persistence (scans, findings, dismissals)</pre>
-      <p>Error handling: <code>thiserror</code> in core, <code>anyhow</code> elsewhere. Per-finding errors are logged and skipped (partial results are better than no results).</p>
+      <p>Error handling: <code>anyhow</code> throughout the workspace. Per-finding errors are logged and skipped (partial results are better than no results).</p>
 
       <h2 id="key-types">Key Types</h2>
       <table>
@@ -411,10 +435,10 @@ max_severity = "info"               <span class="comment"># cap at info, never e
           <tr><td><code>GraphContext</code></td><td>core</td><td>Blast radius, callers, domain tags from cartog</td></tr>
           <tr><td><code>Severity</code></td><td>core</td><td>Info &lt; Warning &lt; Error &lt; Critical</td></tr>
           <tr><td><code>ReviewResult</code></td><td>core</td><td>Final output posted to GitHub</td></tr>
-          <tr><td><code>PipelineStage</code></td><td>core</td><td>Pending &rarr; Scanned &rarr; Enriched &rarr; Escalated &rarr; Deepened &rarr; Completed / Failed</td></tr>
+          <tr><td><code>PipelineStage</code></td><td>core</td><td>Pending &rarr; Prepared &rarr; Scanned &rarr; Enriched &rarr; Escalated &rarr; Deepened &rarr; Completed / Failed</td></tr>
           <tr><td><code>AppConfig</code></td><td>core</td><td>Deserialized from <code>.cartomancer.toml</code></td></tr>
           <tr><td><code>LlmProvider</code></td><td>server</td><td>Async trait: Ollama and Anthropic implementations</td></tr>
-          <tr><td><code>CartogEnricher</code></td><td>graph</td><td>Wraps cartog::db::Database for blast radius queries</td></tr>
+          <tr><td><code>CartogEnricher</code></td><td>graph</td><td>Wraps <code>cartog::db::Database</code>; single <code>enrich_batch_optimized</code> method deduplicates queries per file and symbol</td></tr>
           <tr><td><code>SeverityEscalator</code></td><td>graph</td><td>Blast radius + domain &rarr; severity upgrade</td></tr>
           <tr><td><code>Store</code></td><td>store</td><td>SQLite persistence: CRUD, dismissals, baselines</td></tr>
           <tr><td><code>PrMetadata</code></td><td>github</td><td>PR head/base SHA, refs, title</td></tr>

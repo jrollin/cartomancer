@@ -43,66 +43,6 @@ impl CartogEnricher {
         }
     }
 
-    /// Enrich a single finding with graph context.
-    pub fn enrich(&self, finding: &mut Finding) -> Result<()> {
-        let resolved = self.resolve_symbol(&finding.file_path, finding.start_line)?;
-        let Some((name, is_public)) = resolved else {
-            return Ok(());
-        };
-
-        debug!(symbol = %name, "enriching finding");
-
-        let impact = self.db.impact(&name, self.impact_depth)?;
-        let blast_radius = impact.len() as u32;
-
-        let refs = self.db.refs(&name, None)?;
-        let callers: Vec<String> = refs
-            .iter()
-            .filter_map(|(_, sym)| sym.as_ref().map(|s| s.name.clone()))
-            .collect();
-
-        let mut all_symbols: Vec<&str> = callers.iter().map(|s| s.as_str()).collect();
-        all_symbols.push(&name);
-        let domain_tags = detect_domain_tags(&all_symbols);
-
-        finding.graph_context = Some(GraphContext {
-            symbol_name: Some(name),
-            callers,
-            blast_radius,
-            is_public_api: is_public,
-            domain_tags,
-        });
-
-        Ok(())
-    }
-
-    /// Enrich all findings in a batch, logging and skipping individual failures.
-    pub fn enrich_batch(&self, findings: &mut [Finding]) -> Result<()> {
-        let mut enriched = 0u32;
-        let mut failed = 0u32;
-        for finding in findings.iter_mut() {
-            match self.enrich(finding) {
-                Ok(()) => {
-                    if finding.graph_context.is_some() {
-                        enriched += 1;
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        rule = %finding.rule_id,
-                        file = %finding.file_path,
-                        line = finding.start_line,
-                        err = %e,
-                        "failed to enrich finding, skipping"
-                    );
-                    failed += 1;
-                }
-            }
-        }
-        debug!(enriched, failed, "batch enrichment complete");
-        Ok(())
-    }
-
     /// Batch-enrich findings with deduplicated DB queries.
     ///
     /// Strategy: one `outline()` per unique file, one `impact()` + `refs()` per
@@ -224,17 +164,6 @@ impl CartogEnricher {
         );
         Ok(())
     }
-
-    /// Resolve the primary symbol at a given file:line using cartog outline.
-    /// Returns the symbol name and whether it has public visibility.
-    fn resolve_symbol(&self, file_path: &str, line: u32) -> Result<Option<(String, bool)>> {
-        let symbols = self.db.outline(file_path)?;
-        Ok(symbols
-            .iter()
-            .filter(|s| s.start_line <= line && line <= s.end_line)
-            .min_by_key(|s| s.end_line - s.start_line)
-            .map(|s| (s.name.clone(), s.visibility == Visibility::Public)))
-    }
 }
 
 fn detect_domain_tags(symbol_names: &[&str]) -> Vec<String> {
@@ -348,50 +277,51 @@ mod tests {
     #[test]
     fn enrich_populates_graph_context() {
         let enricher = test_enricher();
-        let mut f = make_finding("src/billing.rs", 15);
-        enricher.enrich(&mut f).unwrap();
-        let ctx = f.graph_context.as_ref().unwrap();
+        let mut findings = vec![make_finding("src/billing.rs", 15)];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+        let ctx = findings[0].graph_context.as_ref().unwrap();
         assert_eq!(ctx.symbol_name.as_deref(), Some("process_payment"));
     }
 
     #[test]
     fn enrich_no_symbol_at_line() {
         let enricher = test_enricher();
-        let mut f = make_finding("src/billing.rs", 999);
-        enricher.enrich(&mut f).unwrap();
-        assert!(f.graph_context.is_none());
+        let mut findings = vec![make_finding("src/billing.rs", 999)];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+        assert!(findings[0].graph_context.is_none());
     }
 
     #[test]
-    fn resolve_symbol_picks_narrowest() {
+    fn enrich_picks_narrowest_symbol() {
         let enricher = test_enricher();
         // Line 15 is inside both BillingService (1-50) and process_payment (10-30).
         // Should pick process_payment (narrower span).
-        let resolved = enricher.resolve_symbol("src/billing.rs", 15).unwrap();
-        assert_eq!(resolved.unwrap().0, "process_payment");
+        let mut findings = vec![make_finding("src/billing.rs", 15)];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+        let ctx = findings[0].graph_context.as_ref().unwrap();
+        assert_eq!(ctx.symbol_name.as_deref(), Some("process_payment"));
     }
 
     #[test]
-    fn resolve_symbol_returns_visibility() {
+    fn enrich_preserves_visibility() {
         let enricher = test_enricher();
-        // process_payment defaults to Public visibility
-        let (_, is_public) = enricher
-            .resolve_symbol("src/billing.rs", 15)
-            .unwrap()
-            .unwrap();
-        assert!(is_public);
-
+        let mut findings = vec![
+            make_finding("src/billing.rs", 15),
+            make_finding("src/auth.rs", 10),
+        ];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+        // process_payment defaults to Public
+        assert!(findings[0].graph_context.as_ref().unwrap().is_public_api);
         // validate_token was set to Private
-        let (_, is_public) = enricher.resolve_symbol("src/auth.rs", 10).unwrap().unwrap();
-        assert!(!is_public);
+        assert!(!findings[1].graph_context.as_ref().unwrap().is_public_api);
     }
 
     #[test]
     fn enrich_unknown_file_returns_ok() {
         let enricher = test_enricher();
-        let mut f = make_finding("src/nonexistent.rs", 1);
-        enricher.enrich(&mut f).unwrap();
-        assert!(f.graph_context.is_none());
+        let mut findings = vec![make_finding("src/nonexistent.rs", 1)];
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
+        assert!(findings[0].graph_context.is_none());
     }
 
     #[test]
@@ -402,9 +332,7 @@ mod tests {
             make_finding("src/nonexistent.rs", 1),
             make_finding("src/auth.rs", 10),
         ];
-        enricher.enrich_batch(&mut findings).unwrap();
-        // First and third should be enriched (or at least attempted without error)
-        // Second has no symbol, so graph_context stays None — that's not a failure
+        enricher.enrich_batch_optimized(&mut findings).unwrap();
         assert!(findings[0].graph_context.is_some());
         assert!(findings[1].graph_context.is_none());
         assert!(findings[2].graph_context.is_some());
@@ -429,41 +357,6 @@ mod tests {
         let ctx1 = findings[1].graph_context.as_ref().unwrap();
         assert_eq!(ctx0.symbol_name, ctx1.symbol_name);
         assert_eq!(ctx0.blast_radius, ctx1.blast_radius);
-    }
-
-    #[test]
-    fn enrich_batch_optimized_matches_serial_enrichment() {
-        let enricher = test_enricher();
-
-        // Serial enrichment
-        let mut serial = [
-            make_finding("src/billing.rs", 15),
-            make_finding("src/auth.rs", 10),
-            make_finding("src/billing.rs", 999),
-        ];
-        for f in serial.iter_mut() {
-            enricher.enrich(f).unwrap();
-        }
-
-        // Batch enrichment
-        let mut batch = vec![
-            make_finding("src/billing.rs", 15),
-            make_finding("src/auth.rs", 10),
-            make_finding("src/billing.rs", 999),
-        ];
-        enricher.enrich_batch_optimized(&mut batch).unwrap();
-
-        // Results should be identical
-        for (s, b) in serial.iter().zip(batch.iter()) {
-            assert_eq!(s.graph_context.is_some(), b.graph_context.is_some());
-            if let (Some(sc), Some(bc)) = (&s.graph_context, &b.graph_context) {
-                assert_eq!(sc.symbol_name, bc.symbol_name);
-                assert_eq!(sc.blast_radius, bc.blast_radius);
-                assert_eq!(sc.is_public_api, bc.is_public_api);
-                assert_eq!(sc.domain_tags, bc.domain_tags);
-                assert_eq!(sc.callers, bc.callers);
-            }
-        }
     }
 
     #[test]

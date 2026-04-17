@@ -83,7 +83,27 @@ async fn main() -> Result<()> {
         } => cmd_dismiss(scan_id, finding_index, reason, &config),
         Command::Dismissed => cmd_dismissed(json, &config),
         Command::Undismiss { dismissal_id } => cmd_undismiss(dismissal_id, &config),
+        Command::Init { force } => cmd_init(&cli.config, force),
     }
+}
+
+/// Template rendered by `cartomancer init`.
+const INIT_TEMPLATE: &str = include_str!("init_template.toml");
+
+fn cmd_init(config_path: &str, force: bool) -> Result<()> {
+    let path = std::path::Path::new(config_path);
+    if path.exists() && !force {
+        anyhow::bail!(
+            "{} already exists. Re-run with --force to overwrite.",
+            path.display()
+        );
+    }
+    std::fs::write(path, INIT_TEMPLATE).with_context(|| format!("writing {}", path.display()))?;
+    println!(
+        "Created {}. Next: run `cartomancer doctor` to validate dependencies.",
+        path.display()
+    );
+    Ok(())
 }
 
 async fn cmd_doctor(config: &cartomancer_core::config::AppConfig, json: bool) -> Result<()> {
@@ -269,7 +289,7 @@ async fn cmd_scan(
             summary: "0 findings".into(),
             status: cartomancer_core::review::ReviewStatus::Completed,
         };
-        pipeline::persist_scan(
+        let scan_id = pipeline::persist_scan(
             &config.storage.db_path,
             &review_for_persist.repo_full_name,
             &git_branch(&target).unwrap_or_else(|| "unknown".into()),
@@ -279,7 +299,7 @@ async fn cmd_scan(
             &review_for_persist,
         );
 
-        println!("No findings from opengrep.");
+        emit_scan_output(json, scan_id, &[])?;
         return Ok(());
     }
 
@@ -402,7 +422,7 @@ async fn cmd_scan(
     log_severity_summary("final", &findings);
 
     // 5. Sort by severity (critical first)
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
 
     // 6. Persist scan results (BR-3: best-effort)
     let review_for_persist = cartomancer_core::review::ReviewResult {
@@ -413,7 +433,7 @@ async fn cmd_scan(
         summary: format!("{} findings", findings.len()),
         status: cartomancer_core::review::ReviewStatus::Completed,
     };
-    pipeline::persist_scan(
+    let scan_id = pipeline::persist_scan(
         &config.storage.db_path,
         &review_for_persist.repo_full_name,
         &git_branch(&target).unwrap_or_else(|| "unknown".into()),
@@ -424,11 +444,7 @@ async fn cmd_scan(
     );
 
     // 7. Output
-    if json {
-        println!("{}", serde_json::to_string_pretty(&findings)?);
-    } else {
-        print_findings(&findings);
-    }
+    emit_scan_output(json, scan_id, &findings)?;
 
     info!(
         total_elapsed_ms = scan_start.elapsed().as_millis() as u64,
@@ -447,7 +463,11 @@ fn cmd_history(
     let store = match cartomancer_store::store::Store::open(&config.storage.db_path) {
         Ok(s) => s,
         Err(_) => {
-            println!("No scan history found.");
+            if json {
+                println!("[]");
+            } else {
+                println!("No scan history found.");
+            }
             return Ok(());
         }
     };
@@ -459,7 +479,11 @@ fn cmd_history(
     let scans = store.list_scans(&filter)?;
 
     if scans.is_empty() {
-        println!("No scan history found.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No scan history found.");
+        }
         return Ok(());
     }
 
@@ -523,7 +547,11 @@ fn cmd_findings(
     };
 
     if findings.is_empty() {
-        println!("No findings match the given filters.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No findings match the given filters.");
+        }
         return Ok(());
     }
 
@@ -607,7 +635,11 @@ fn cmd_dismissed(json: bool, config: &cartomancer_core::config::AppConfig) -> Re
     let dismissals = store.list_dismissals()?;
 
     if dismissals.is_empty() {
-        println!("No dismissed findings.");
+        if json {
+            println!("[]");
+        } else {
+            println!("No dismissed findings.");
+        }
         return Ok(());
     }
 
@@ -693,6 +725,68 @@ fn parse_repo_name(url: &str) -> Option<String> {
         Some(format!("{}/{}", parts[1], parts[0]))
     } else {
         None
+    }
+}
+
+/// Emit scan results as JSON envelope or formatted text.
+///
+/// JSON envelope: `{ "scan_id": <i64|null>, "findings": [...], "summary": {...} }`.
+/// Text: prints scan id (if any), findings via `print_findings`, or a human message when empty.
+fn emit_scan_output(json: bool, scan_id: Option<i64>, findings: &[Finding]) -> Result<()> {
+    if json {
+        let summary = severity_counts(findings);
+        let output = serde_json::json!({
+            "scan_id": scan_id,
+            "findings": findings,
+            "summary": {
+                "total": findings.len(),
+                "critical": summary.critical,
+                "error": summary.error,
+                "warning": summary.warning,
+                "info": summary.info,
+            },
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if findings.is_empty() {
+        if let Some(id) = scan_id {
+            println!("No findings. Scan id: {id}");
+        } else {
+            println!("No findings from opengrep.");
+        }
+    } else {
+        if let Some(id) = scan_id {
+            println!("Scan id: {id}");
+        }
+        print_findings(findings);
+    }
+    Ok(())
+}
+
+struct SeverityCounts {
+    critical: usize,
+    error: usize,
+    warning: usize,
+    info: usize,
+}
+
+fn severity_counts(findings: &[Finding]) -> SeverityCounts {
+    SeverityCounts {
+        critical: findings
+            .iter()
+            .filter(|f| f.severity == Severity::Critical)
+            .count(),
+        error: findings
+            .iter()
+            .filter(|f| f.severity == Severity::Error)
+            .count(),
+        warning: findings
+            .iter()
+            .filter(|f| f.severity == Severity::Warning)
+            .count(),
+        info: findings
+            .iter()
+            .filter(|f| f.severity == Severity::Info)
+            .count(),
     }
 }
 

@@ -322,7 +322,7 @@ pub async fn run_pipeline(
     }
 
     // Sort by severity (critical first)
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
 
     // Build ReviewResult and mark completed
     let scan_duration = pipeline_start.elapsed();
@@ -797,6 +797,7 @@ pub async fn finalize_and_post(
 }
 
 /// Persist a scan/review result to the store (BR-3: best-effort, never blocks pipeline).
+/// Returns the assigned scan id on success, or `None` if persistence failed.
 pub fn persist_scan(
     db_path: &str,
     repo: &str,
@@ -805,12 +806,12 @@ pub fn persist_scan(
     command: &str,
     pr_number: Option<u64>,
     review: &cartomancer_core::review::ReviewResult,
-) {
+) -> Option<i64> {
     let store = match Store::open(db_path) {
         Ok(s) => s,
         Err(e) => {
             warn!(path = db_path, err = %e, "failed to open store — scan not persisted");
-            return;
+            return None;
         }
     };
 
@@ -834,7 +835,7 @@ pub fn persist_scan(
         Ok(id) => id,
         Err(e) => {
             warn!(err = %e, "failed to insert scan record — scan not persisted");
-            return;
+            return None;
         }
     };
 
@@ -849,6 +850,8 @@ pub fn persist_scan(
         findings = review.findings.len(),
         "scan persisted to store"
     );
+
+    Some(scan_id)
 }
 
 /// Annotate findings as "new" or "existing" by comparing fingerprints against

@@ -5,8 +5,10 @@
 Global flags: `--json` (machine-readable output), `--config <path>` (default: `.cartomancer.toml`).
 
 ```
+cartomancer init [--force]                     Scaffold a commented .cartomancer.toml
 cartomancer scan <path>                        Local scan, no GitHub
-cartomancer review <owner/repo> <pr>           One-shot PR review via CLI
+cartomancer review <owner/repo> <pr> [--resume <id>]
+                                               One-shot PR review via CLI (resume from last checkpoint)
 cartomancer history [--branch <name>]          Browse past scan results
 cartomancer findings [<scan-id>] [filters]     Browse/search findings
 cartomancer dismiss <scan-id> <index>          Dismiss a false positive
@@ -15,6 +17,19 @@ cartomancer undismiss <dismissal-id>           Remove a dismissal
 cartomancer serve                              Webhook server for GitHub events
 cartomancer doctor                             Check dependencies and config health
 ```
+
+## CLI Output Formats
+
+Global `--json` flag switches all commands to machine-readable output.
+
+| Command | `--json` shape |
+|---------|----------------|
+| `scan` | `{ "scan_id": <i64\|null>, "findings": [...], "summary": { total, critical, error, warning, info } }` |
+| `history`, `findings`, `dismissed` | JSON array; empty results emit `[]` so pipelines stay valid |
+| `doctor` | `{ "checks": [...], "summary": { total, ok, warn, error } }`, exit 1 if any check errors |
+| `review --dry-run` | `ReviewResult` JSON |
+
+Text output for `scan` prints the scan id on the first line (e.g. `Scan id: 42`) so it can be piped into `dismiss` or `findings`.
 
 ## Pipeline Stages
 
@@ -284,6 +299,23 @@ pending → prepared → scanned → enriched → escalated → deepened → com
 The `prepared` stage checkpoints after clone + checkout + diff fetch, before the opengrep scan. This allows `--resume` to skip the clone step when the scan crashes or times out during opengrep. The scan record also stores the `work_dir` path so resume can reuse the checkout.
 
 Each stage writes findings to the store and advances the `stage` column. On failure, the scan is marked `failed` with an error message. The `--resume <scan-id>` flag on the `review` command allows restarting from the last completed stage.
+
+## Doctor Checks
+
+`cartomancer doctor` runs a structured health report over everything the pipeline touches. Each check returns one of `Ok` / `Warn` / `Error`; the process exits non-zero when any check is in the `Error` state.
+
+| Check | Failure level | What it verifies |
+|-------|---------------|------------------|
+| `config` | Error | `AppConfig::validate()` passes |
+| `git` | Error | `git` binary in `PATH` (required for `review` / `serve`) |
+| `opengrep` | Error | `opengrep --version` responds within 10s |
+| `custom-rules` | Warn | `opengrep.rules_dir` exists and contains at least one `.yaml`/`.yml` rule |
+| `knowledge` | Warn | `knowledge.knowledge_file` is readable and within `max_knowledge_chars` |
+| `cartog` (CLI) | Warn | `cartog --version` succeeds |
+| `cartog-db` | Warn | the file at `severity.cartog_db_path` exists (graph enrichment skipped when missing) |
+| `github-token` | Warn | `GITHUB_TOKEN` env or `github.token` is set |
+| `llm-provider` | Warn | configured provider responds to a health check |
+| `storage` | Error | SQLite store at `storage.db_path` can be opened |
 
 ## Custom Rules & Knowledge Base
 

@@ -82,10 +82,12 @@ impl CheckResult {
 pub async fn run_checks(config: &AppConfig) -> DoctorReport {
     let checks = vec![
         check_config(config),
+        check_git(),
         check_opengrep().await,
         check_custom_rules(config),
         check_knowledge(config),
         check_cartog(),
+        check_cartog_db(config),
         check_github_token(config),
         check_llm_provider(config).await,
         check_storage(config),
@@ -371,6 +373,41 @@ fn check_cartog() -> CheckResult {
     }
 }
 
+/// Check that `git` is in PATH — required for cloning and `review --work-dir` flows.
+fn check_git() -> CheckResult {
+    match std::process::Command::new("git").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            CheckResult::ok("git", version.trim().to_string())
+        }
+        Ok(output) => CheckResult::fail(
+            "git",
+            format!("exited with code {}", output.status.code().unwrap_or(-1)),
+        ),
+        Err(_) => CheckResult::fail(
+            "git",
+            "not found in PATH (required for `review` and `serve`)",
+        ),
+    }
+}
+
+/// Check that the configured cartog database exists — warns if missing, because
+/// graph enrichment is optional but strongly recommended.
+fn check_cartog_db(config: &AppConfig) -> CheckResult {
+    let path = std::path::Path::new(&config.severity.cartog_db_path);
+    if path.exists() {
+        CheckResult::ok("cartog-db", format!("found at {}", path.display()))
+    } else {
+        CheckResult::warn(
+            "cartog-db",
+            format!(
+                "{} not found — graph enrichment will be skipped (run `cartog index .`)",
+                path.display()
+            ),
+        )
+    }
+}
+
 /// Create the configured LLM provider and run its health check.
 async fn check_llm_provider(config: &AppConfig) -> CheckResult {
     let provider_name = format!("{:?}", config.llm.provider).to_lowercase();
@@ -481,6 +518,24 @@ mod tests {
         assert_eq!(report.summary.ok, 1);
         assert_eq!(report.summary.warn, 1);
         assert_eq!(report.summary.error, 1);
+    }
+
+    #[test]
+    fn check_cartog_db_missing_warns() {
+        let mut config = AppConfig::default();
+        config.severity.cartog_db_path = "/nonexistent/path/.cartog.db".into();
+        let result = check_cartog_db(&config);
+        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(result.message.contains("not found"));
+    }
+
+    #[test]
+    fn check_cartog_db_present_ok() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut config = AppConfig::default();
+        config.severity.cartog_db_path = tmp.path().to_string_lossy().into_owned();
+        let result = check_cartog_db(&config);
+        assert_eq!(result.status, CheckStatus::Ok);
     }
 
     #[test]
