@@ -934,4 +934,91 @@ mod tests {
     fn parse_repo_name_bare_string_returns_none() {
         assert_eq!(parse_repo_name("noslash"), None);
     }
+
+    fn make_finding(severity: Severity) -> Finding {
+        Finding {
+            rule_id: "r".into(),
+            message: "m".into(),
+            severity,
+            file_path: "f.rs".into(),
+            start_line: 1,
+            end_line: 1,
+            snippet: String::new(),
+            cwe: None,
+            graph_context: None,
+            llm_analysis: None,
+            escalation_reasons: vec![],
+            is_new: None,
+            enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
+        }
+    }
+
+    #[test]
+    fn severity_counts_tallies_every_variant() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Error),
+            make_finding(Severity::Error),
+            make_finding(Severity::Warning),
+            make_finding(Severity::Info),
+            make_finding(Severity::Info),
+            make_finding(Severity::Info),
+        ];
+        let counts = severity_counts(&findings);
+        assert_eq!(counts.critical, 1);
+        assert_eq!(counts.error, 2);
+        assert_eq!(counts.warning, 1);
+        assert_eq!(counts.info, 3);
+    }
+
+    #[test]
+    fn severity_counts_empty_is_zero() {
+        let counts = severity_counts(&[]);
+        assert_eq!(counts.critical, 0);
+        assert_eq!(counts.error, 0);
+        assert_eq!(counts.warning, 0);
+        assert_eq!(counts.info, 0);
+    }
+
+    #[test]
+    fn init_template_parses_as_valid_config() {
+        let config: cartomancer_core::config::AppConfig = toml::from_str(INIT_TEMPLATE)
+            .expect("init_template.toml must deserialize into AppConfig");
+        config
+            .validate()
+            .expect("init template must pass validate()");
+    }
+
+    #[test]
+    fn cmd_init_creates_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cartomancer.toml");
+        cmd_init(path.to_str().unwrap(), false).unwrap();
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("# Cartomancer configuration"));
+    }
+
+    #[test]
+    fn cmd_init_refuses_overwrite_without_force() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cartomancer.toml");
+        std::fs::write(&path, "existing").unwrap();
+        let err = cmd_init(path.to_str().unwrap(), false).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "got: {err}");
+        // File was not overwritten
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+    }
+
+    #[test]
+    fn cmd_init_force_overwrites() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cartomancer.toml");
+        std::fs::write(&path, "existing").unwrap();
+        cmd_init(path.to_str().unwrap(), true).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("# Cartomancer configuration"));
+    }
 }

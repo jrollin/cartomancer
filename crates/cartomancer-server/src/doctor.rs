@@ -521,6 +521,14 @@ mod tests {
     }
 
     #[test]
+    fn check_git_finds_binary() {
+        // CI runners and dev machines are expected to have git in PATH.
+        let result = check_git();
+        assert_eq!(result.status, CheckStatus::Ok, "msg: {}", result.message);
+        assert!(result.message.contains("git version"));
+    }
+
+    #[test]
     fn check_cartog_db_missing_warns() {
         let mut config = AppConfig::default();
         config.severity.cartog_db_path = "/nonexistent/path/.cartog.db".into();
