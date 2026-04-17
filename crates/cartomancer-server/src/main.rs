@@ -422,7 +422,7 @@ async fn cmd_scan(
     log_severity_summary("final", &findings);
 
     // 5. Sort by severity (critical first)
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
 
     // 6. Persist scan results (BR-3: best-effort)
     let review_for_persist = cartomancer_core::review::ReviewResult {

@@ -322,7 +322,7 @@ pub async fn run_pipeline(
     }
 
     // Sort by severity (critical first)
-    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings.sort_by_key(|f| std::cmp::Reverse(f.severity));
 
     // Build ReviewResult and mark completed
     let scan_duration = pipeline_start.elapsed();
