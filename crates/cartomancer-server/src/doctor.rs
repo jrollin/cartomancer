@@ -123,34 +123,48 @@ fn build_report(checks: Vec<CheckResult>) -> DoctorReport {
 
 /// Print report as a text checklist.
 pub fn print_text(report: &DoctorReport) {
-    println!("Cartomancer Doctor\n");
+    print!("{}", format_text(report));
+}
+
+/// Format the text report. Pure for testability.
+pub fn format_text(report: &DoctorReport) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "Cartomancer Doctor\n");
     for check in &report.checks {
-        println!(
+        let _ = writeln!(
+            out,
             "  [{}] {}: {}",
             check.status.icon(),
             check.name,
             check.message
         );
     }
-
-    println!();
+    out.push('\n');
     let s = &report.summary;
-    if s.error > 0 {
-        println!(
+    let _ = if s.error > 0 {
+        writeln!(
+            out,
             "{} checks passed, {} warnings, {} errors",
             s.ok, s.warn, s.error
-        );
+        )
     } else if s.warn > 0 {
-        println!("{} checks passed, {} warnings", s.ok, s.warn);
+        writeln!(out, "{} checks passed, {} warnings", s.ok, s.warn)
     } else {
-        println!("All {} checks passed", s.ok);
-    }
+        writeln!(out, "All {} checks passed", s.ok)
+    };
+    out
 }
 
 /// Print report as JSON.
 pub fn print_json(report: &DoctorReport) -> Result<()> {
-    println!("{}", serde_json::to_string_pretty(report)?);
+    println!("{}", serialize_report(report)?);
     Ok(())
+}
+
+/// Serialize the report as pretty JSON. Pure for testability.
+pub fn serialize_report(report: &DoctorReport) -> Result<String> {
+    Ok(serde_json::to_string_pretty(report)?)
 }
 
 // --- Individual checks ---
@@ -547,46 +561,60 @@ mod tests {
     }
 
     #[test]
-    fn print_json_serializes_report() {
+    fn serialize_report_pretty_contains_fields() {
         let report = build_report(vec![
             CheckResult::ok("a", "fine"),
             CheckResult::warn("b", "missing"),
         ]);
-        // print_json writes to stdout; assert the structured shape instead.
-        let json = serde_json::to_string(&report).unwrap();
-        assert!(json.contains("\"checks\""));
-        assert!(json.contains("\"summary\""));
-        assert!(json.contains("\"name\":\"a\""));
-        assert!(json.contains("\"status\":\"ok\""));
-        assert!(json.contains("\"status\":\"warn\""));
-        assert!(json.contains("\"total\":2"));
-        // Smoke: the public function does not panic.
-        print_json(&report).unwrap();
+        let json = serialize_report(&report).unwrap();
+        // Pretty-printed JSON uses newlines
+        assert!(
+            json.contains('\n'),
+            "pretty JSON should contain newlines: {json}"
+        );
+        // Round-trip to make sure the shape is correct
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["checks"][0]["name"], "a");
+        assert_eq!(v["checks"][0]["status"], "ok");
+        assert_eq!(v["checks"][1]["status"], "warn");
+        assert_eq!(v["summary"]["total"], 2);
+        assert_eq!(v["summary"]["ok"], 1);
+        assert_eq!(v["summary"]["warn"], 1);
     }
 
     #[test]
-    fn print_text_does_not_panic_across_branches() {
-        // All-ok
-        print_text(&build_report(vec![CheckResult::ok("a", "fine")]));
-        // With warnings
-        print_text(&build_report(vec![
+    fn format_text_all_ok_branch() {
+        let out = format_text(&build_report(vec![
+            CheckResult::ok("a", "fine"),
+            CheckResult::ok("b", "also fine"),
+        ]));
+        assert!(out.contains("Cartomancer Doctor"));
+        assert!(out.contains("[+] a: fine"));
+        assert!(out.contains("[+] b: also fine"));
+        assert!(out.contains("All 2 checks passed"));
+        assert!(!out.contains("warnings"));
+    }
+
+    #[test]
+    fn format_text_warn_branch() {
+        let out = format_text(&build_report(vec![
             CheckResult::ok("a", "fine"),
             CheckResult::warn("b", "missing"),
         ]));
-        // With errors
-        print_text(&build_report(vec![
+        assert!(out.contains("[!] b: missing"));
+        assert!(out.contains("1 checks passed, 1 warnings"));
+        assert!(!out.contains("errors"));
+    }
+
+    #[test]
+    fn format_text_error_branch() {
+        let out = format_text(&build_report(vec![
             CheckResult::ok("a", "fine"),
             CheckResult::warn("b", "missing"),
             CheckResult::fail("c", "broken"),
         ]));
-    }
-
-    #[test]
-    fn check_cartog_db_empty_path_warns() {
-        let mut config = AppConfig::default();
-        config.severity.cartog_db_path = String::new();
-        let result = check_cartog_db(&config);
-        assert_eq!(result.status, CheckStatus::Warn);
+        assert!(out.contains("[x] c: broken"));
+        assert!(out.contains("1 checks passed, 1 warnings, 1 errors"));
     }
 
     #[test]

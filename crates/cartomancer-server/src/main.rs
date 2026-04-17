@@ -738,12 +738,18 @@ fn emit_scan_output(json: bool, scan_id: Option<i64>, findings: &[Finding]) -> R
     } else if findings.is_empty() {
         println!("{}", render_empty_scan_text(scan_id));
     } else {
-        if let Some(id) = scan_id {
-            println!("Scan id: {id}");
+        if let Some(header) = render_populated_scan_header(scan_id) {
+            println!("{header}");
         }
         print_findings(findings);
     }
     Ok(())
+}
+
+/// Format the single-line header printed above populated scan output in text mode.
+/// Returns None when no scan id is available so the caller can skip the line.
+fn render_populated_scan_header(scan_id: Option<i64>) -> Option<String> {
+    scan_id.map(|id| format!("Scan id: {id}"))
 }
 
 /// Build the `--json` envelope string for a scan result. Pure for testability.
@@ -1000,10 +1006,15 @@ mod tests {
             .expect("init template must pass validate()");
     }
 
-    #[test]
-    fn cmd_init_creates_file() {
+    fn init_tmp() -> (tempfile::TempDir, std::path::PathBuf) {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("cartomancer.toml");
+        (tmp, path)
+    }
+
+    #[test]
+    fn cmd_init_creates_file() {
+        let (_tmp, path) = init_tmp();
         cmd_init(path.to_str().unwrap(), false).unwrap();
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
@@ -1012,8 +1023,7 @@ mod tests {
 
     #[test]
     fn cmd_init_refuses_overwrite_without_force() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("cartomancer.toml");
+        let (_tmp, path) = init_tmp();
         std::fs::write(&path, "existing").unwrap();
         let err = cmd_init(path.to_str().unwrap(), false).unwrap_err();
         assert!(err.to_string().contains("already exists"), "got: {err}");
@@ -1023,8 +1033,7 @@ mod tests {
 
     #[test]
     fn cmd_init_force_overwrites() {
-        let tmp = tempfile::tempdir().unwrap();
-        let path = tmp.path().join("cartomancer.toml");
+        let (_tmp, path) = init_tmp();
         std::fs::write(&path, "existing").unwrap();
         cmd_init(path.to_str().unwrap(), true).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -1073,12 +1082,32 @@ mod tests {
     }
 
     #[test]
-    fn emit_scan_output_empty_json_does_not_panic() {
-        // Smoke — stdout capture is not worth the plumbing; the pure render
-        // helpers are covered separately. This exercises the branch wiring.
-        emit_scan_output(true, None, &[]).unwrap();
-        emit_scan_output(true, Some(1), &[]).unwrap();
-        emit_scan_output(false, None, &[]).unwrap();
-        emit_scan_output(false, Some(2), &[]).unwrap();
+    fn render_populated_scan_header_with_id() {
+        assert_eq!(
+            render_populated_scan_header(Some(42)),
+            Some("Scan id: 42".into())
+        );
+    }
+
+    #[test]
+    fn render_populated_scan_header_without_id() {
+        assert!(render_populated_scan_header(None).is_none());
+    }
+
+    #[test]
+    fn render_scan_json_populated_includes_findings() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Info),
+        ];
+        let out = render_scan_json(Some(99), &findings).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["scan_id"], 99);
+        assert_eq!(v["findings"].as_array().unwrap().len(), 2);
+        assert_eq!(v["summary"]["total"], 2);
+        assert_eq!(v["summary"]["critical"], 1);
+        assert_eq!(v["summary"]["info"], 1);
+        // Pretty-printed output contains newlines
+        assert!(out.contains('\n'));
     }
 }
