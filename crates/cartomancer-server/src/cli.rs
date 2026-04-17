@@ -83,6 +83,12 @@ pub enum Command {
     },
     /// Check that all dependencies and configuration are valid
     Doctor,
+    /// Scaffold a commented .cartomancer.toml in the current directory
+    Init {
+        /// Overwrite an existing config file
+        #[arg(long)]
+        force: bool,
+    },
     /// Review a GitHub PR (one-shot mode)
     Review {
         /// Repository (owner/repo)

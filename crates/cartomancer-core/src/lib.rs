@@ -5,7 +5,6 @@
 
 pub mod config;
 pub mod diff;
-pub mod error;
 pub mod finding;
 pub mod review;
 pub mod severity;

@@ -25,10 +25,17 @@ pub struct AppConfig {
     pub knowledge: KnowledgeConfig,
 }
 
+/// GitHub credentials. Prefer environment variables (`GITHUB_TOKEN`,
+/// `CARTOMANCER_WEBHOOK_SECRET`) over config-file values to keep secrets out of
+/// source control. Both fields are excluded from serialization.
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct GitHubConfig {
+    /// HMAC-SHA256 shared secret for validating inbound webhook payloads.
+    /// Required when running `cartomancer serve`.
     #[serde(skip_serializing)]
     pub webhook_secret: Option<String>,
+    /// Personal access token or GitHub App installation token used for PR
+    /// metadata fetches and review comments. Required for `review` and `serve`.
     #[serde(skip_serializing)]
     pub token: Option<String>,
 }
@@ -45,10 +52,16 @@ impl std::fmt::Debug for GitHubConfig {
     }
 }
 
+/// Opengrep scanner configuration. Controls rule sources, timeouts, and
+/// opengrep-specific analysis flags.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpengrepConfig {
+    /// Rule references passed to opengrep. Accepts registry ids
+    /// (`p/security`), `auto`, or local rule file paths.
     #[serde(default = "default_opengrep_rules")]
     pub rules: Vec<String>,
+    /// Max wall-clock seconds for the opengrep subprocess. Acts as a hard
+    /// safety timeout even when `dynamic_timeout` is enabled.
     #[serde(default = "default_timeout")]
     pub timeout_seconds: u64,
     /// Glob patterns passed as `--exclude` to opengrep (e.g. `.github/`, `config/database.yml`).
@@ -178,12 +191,17 @@ pub enum LlmBackend {
     Anthropic,
 }
 
+/// Severity-escalation knobs. Control when findings get upgraded based on
+/// blast radius and when they qualify for LLM deepening.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SeverityConfig {
+    /// Minimum blast radius (cartog impact count) to trigger escalation.
     #[serde(default = "default_blast_threshold")]
     pub blast_radius_threshold: u32,
+    /// Minimum severity required to trigger LLM deepening.
     #[serde(default = "default_llm_threshold")]
     pub llm_deepening_threshold: Severity,
+    /// Depth used for cartog `impact()` traversal. Must be 1..=20.
     #[serde(default = "default_impact_depth")]
     pub impact_depth: u32,
     /// Path to the cartog database. Relative paths resolved from the scanned directory.
@@ -226,10 +244,11 @@ fn default_db_path() -> String {
     ".cartomancer.db".into()
 }
 
-/// Serve (webhook server) configuration.
+/// Webhook-server runtime configuration. Used only by `cartomancer serve`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServeConfig {
-    /// Maximum number of concurrent PR reviews (bounded by semaphore).
+    /// Maximum number of concurrent PR reviews. Additional webhook events
+    /// queue on a semaphore rather than running in parallel.
     #[serde(default = "default_max_concurrent_reviews")]
     pub max_concurrent_reviews: usize,
 }
@@ -316,7 +335,9 @@ fn default_impact_depth() -> u32 {
 
 impl AppConfig {
     /// Validate semantic constraints that serde cannot enforce.
-    /// Collects all errors before returning, so the user sees everything at once.
+    ///
+    /// Collects every error before returning so the user sees all problems in
+    /// one pass. Returns the concatenated messages joined with `"; "`.
     pub fn validate(&self) -> Result<(), String> {
         let mut errors = Vec::<String>::new();
 
