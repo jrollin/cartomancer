@@ -325,6 +325,24 @@ mod tests {
     }
 
     #[test]
+    fn cli_parse_init_defaults() {
+        let cli = Cli::try_parse_from(["cartomancer", "init"]).unwrap();
+        match cli.command {
+            Command::Init { force } => assert!(!force),
+            _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_init_force() {
+        let cli = Cli::try_parse_from(["cartomancer", "init", "--force"]).unwrap();
+        match cli.command {
+            Command::Init { force } => assert!(force),
+            _ => panic!("expected Init command"),
+        }
+    }
+
+    #[test]
     fn cli_review_repo_is_positional() {
         let result = Cli::try_parse_from(["cartomancer", "review", "--repo", "a/b", "--pr", "1"]);
         assert!(result.is_err());

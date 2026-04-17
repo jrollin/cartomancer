@@ -734,32 +734,47 @@ fn parse_repo_name(url: &str) -> Option<String> {
 /// Text: prints scan id (if any), findings via `print_findings`, or a human message when empty.
 fn emit_scan_output(json: bool, scan_id: Option<i64>, findings: &[Finding]) -> Result<()> {
     if json {
-        let summary = severity_counts(findings);
-        let output = serde_json::json!({
-            "scan_id": scan_id,
-            "findings": findings,
-            "summary": {
-                "total": findings.len(),
-                "critical": summary.critical,
-                "error": summary.error,
-                "warning": summary.warning,
-                "info": summary.info,
-            },
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        println!("{}", render_scan_json(scan_id, findings)?);
     } else if findings.is_empty() {
-        if let Some(id) = scan_id {
-            println!("No findings. Scan id: {id}");
-        } else {
-            println!("No findings from opengrep.");
-        }
+        println!("{}", render_empty_scan_text(scan_id));
     } else {
-        if let Some(id) = scan_id {
-            println!("Scan id: {id}");
+        if let Some(header) = render_populated_scan_header(scan_id) {
+            println!("{header}");
         }
         print_findings(findings);
     }
     Ok(())
+}
+
+/// Format the single-line header printed above populated scan output in text mode.
+/// Returns None when no scan id is available so the caller can skip the line.
+fn render_populated_scan_header(scan_id: Option<i64>) -> Option<String> {
+    scan_id.map(|id| format!("Scan id: {id}"))
+}
+
+/// Build the `--json` envelope string for a scan result. Pure for testability.
+fn render_scan_json(scan_id: Option<i64>, findings: &[Finding]) -> Result<String> {
+    let summary = severity_counts(findings);
+    let output = serde_json::json!({
+        "scan_id": scan_id,
+        "findings": findings,
+        "summary": {
+            "total": findings.len(),
+            "critical": summary.critical,
+            "error": summary.error,
+            "warning": summary.warning,
+            "info": summary.info,
+        },
+    });
+    Ok(serde_json::to_string_pretty(&output)?)
+}
+
+/// Format the human-readable line for an empty scan (text mode only).
+fn render_empty_scan_text(scan_id: Option<i64>) -> String {
+    match scan_id {
+        Some(id) => format!("No findings. Scan id: {id}"),
+        None => "No findings from opengrep.".into(),
+    }
 }
 
 struct SeverityCounts {
@@ -933,5 +948,166 @@ mod tests {
     #[test]
     fn parse_repo_name_bare_string_returns_none() {
         assert_eq!(parse_repo_name("noslash"), None);
+    }
+
+    fn make_finding(severity: Severity) -> Finding {
+        Finding {
+            rule_id: "r".into(),
+            message: "m".into(),
+            severity,
+            file_path: "f.rs".into(),
+            start_line: 1,
+            end_line: 1,
+            snippet: String::new(),
+            cwe: None,
+            graph_context: None,
+            llm_analysis: None,
+            escalation_reasons: vec![],
+            is_new: None,
+            enclosing_context: None,
+            suggested_fix: None,
+            agent_prompt: None,
+        }
+    }
+
+    #[test]
+    fn severity_counts_tallies_every_variant() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Error),
+            make_finding(Severity::Error),
+            make_finding(Severity::Warning),
+            make_finding(Severity::Info),
+            make_finding(Severity::Info),
+            make_finding(Severity::Info),
+        ];
+        let counts = severity_counts(&findings);
+        assert_eq!(counts.critical, 1);
+        assert_eq!(counts.error, 2);
+        assert_eq!(counts.warning, 1);
+        assert_eq!(counts.info, 3);
+    }
+
+    #[test]
+    fn severity_counts_empty_is_zero() {
+        let counts = severity_counts(&[]);
+        assert_eq!(counts.critical, 0);
+        assert_eq!(counts.error, 0);
+        assert_eq!(counts.warning, 0);
+        assert_eq!(counts.info, 0);
+    }
+
+    #[test]
+    fn init_template_parses_as_valid_config() {
+        let config: cartomancer_core::config::AppConfig = toml::from_str(INIT_TEMPLATE)
+            .expect("init_template.toml must deserialize into AppConfig");
+        config
+            .validate()
+            .expect("init template must pass validate()");
+    }
+
+    fn init_tmp() -> (tempfile::TempDir, std::path::PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cartomancer.toml");
+        (tmp, path)
+    }
+
+    #[test]
+    fn cmd_init_creates_file() {
+        let (_tmp, path) = init_tmp();
+        cmd_init(path.to_str().unwrap(), false).unwrap();
+        assert!(path.exists());
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("# Cartomancer configuration"));
+    }
+
+    #[test]
+    fn cmd_init_refuses_overwrite_without_force() {
+        let (_tmp, path) = init_tmp();
+        std::fs::write(&path, "existing").unwrap();
+        let err = cmd_init(path.to_str().unwrap(), false).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "got: {err}");
+        // File was not overwritten
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "existing");
+    }
+
+    #[test]
+    fn cmd_init_force_overwrites() {
+        let (_tmp, path) = init_tmp();
+        std::fs::write(&path, "existing").unwrap();
+        cmd_init(path.to_str().unwrap(), true).unwrap();
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(content.starts_with("# Cartomancer configuration"));
+    }
+
+    #[test]
+    fn render_empty_scan_text_with_id() {
+        assert_eq!(render_empty_scan_text(Some(42)), "No findings. Scan id: 42");
+    }
+
+    #[test]
+    fn render_empty_scan_text_without_id() {
+        assert_eq!(render_empty_scan_text(None), "No findings from opengrep.");
+    }
+
+    #[test]
+    fn render_scan_json_empty() {
+        let out = render_scan_json(Some(7), &[]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["scan_id"], 7);
+        assert_eq!(v["findings"].as_array().unwrap().len(), 0);
+        assert_eq!(v["summary"]["total"], 0);
+        assert_eq!(v["summary"]["critical"], 0);
+        assert_eq!(v["summary"]["error"], 0);
+        assert_eq!(v["summary"]["warning"], 0);
+        assert_eq!(v["summary"]["info"], 0);
+    }
+
+    #[test]
+    fn render_scan_json_populated() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Error),
+            make_finding(Severity::Warning),
+        ];
+        let out = render_scan_json(None, &findings).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["scan_id"].is_null());
+        assert_eq!(v["findings"].as_array().unwrap().len(), 3);
+        assert_eq!(v["summary"]["total"], 3);
+        assert_eq!(v["summary"]["critical"], 1);
+        assert_eq!(v["summary"]["error"], 1);
+        assert_eq!(v["summary"]["warning"], 1);
+        assert_eq!(v["summary"]["info"], 0);
+    }
+
+    #[test]
+    fn render_populated_scan_header_with_id() {
+        assert_eq!(
+            render_populated_scan_header(Some(42)),
+            Some("Scan id: 42".into())
+        );
+    }
+
+    #[test]
+    fn render_populated_scan_header_without_id() {
+        assert!(render_populated_scan_header(None).is_none());
+    }
+
+    #[test]
+    fn render_scan_json_populated_includes_findings() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Info),
+        ];
+        let out = render_scan_json(Some(99), &findings).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["scan_id"], 99);
+        assert_eq!(v["findings"].as_array().unwrap().len(), 2);
+        assert_eq!(v["summary"]["total"], 2);
+        assert_eq!(v["summary"]["critical"], 1);
+        assert_eq!(v["summary"]["info"], 1);
+        // Pretty-printed output contains newlines
+        assert!(out.contains('\n'));
     }
 }
