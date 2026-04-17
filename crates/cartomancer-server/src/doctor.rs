@@ -547,6 +547,49 @@ mod tests {
     }
 
     #[test]
+    fn print_json_serializes_report() {
+        let report = build_report(vec![
+            CheckResult::ok("a", "fine"),
+            CheckResult::warn("b", "missing"),
+        ]);
+        // print_json writes to stdout; assert the structured shape instead.
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.contains("\"checks\""));
+        assert!(json.contains("\"summary\""));
+        assert!(json.contains("\"name\":\"a\""));
+        assert!(json.contains("\"status\":\"ok\""));
+        assert!(json.contains("\"status\":\"warn\""));
+        assert!(json.contains("\"total\":2"));
+        // Smoke: the public function does not panic.
+        print_json(&report).unwrap();
+    }
+
+    #[test]
+    fn print_text_does_not_panic_across_branches() {
+        // All-ok
+        print_text(&build_report(vec![CheckResult::ok("a", "fine")]));
+        // With warnings
+        print_text(&build_report(vec![
+            CheckResult::ok("a", "fine"),
+            CheckResult::warn("b", "missing"),
+        ]));
+        // With errors
+        print_text(&build_report(vec![
+            CheckResult::ok("a", "fine"),
+            CheckResult::warn("b", "missing"),
+            CheckResult::fail("c", "broken"),
+        ]));
+    }
+
+    #[test]
+    fn check_cartog_db_empty_path_warns() {
+        let mut config = AppConfig::default();
+        config.severity.cartog_db_path = String::new();
+        let result = check_cartog_db(&config);
+        assert_eq!(result.status, CheckStatus::Warn);
+    }
+
+    #[test]
     fn check_status_serializes_lowercase() {
         assert_eq!(serde_json::to_string(&CheckStatus::Ok).unwrap(), "\"ok\"");
         assert_eq!(

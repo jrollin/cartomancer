@@ -734,25 +734,9 @@ fn parse_repo_name(url: &str) -> Option<String> {
 /// Text: prints scan id (if any), findings via `print_findings`, or a human message when empty.
 fn emit_scan_output(json: bool, scan_id: Option<i64>, findings: &[Finding]) -> Result<()> {
     if json {
-        let summary = severity_counts(findings);
-        let output = serde_json::json!({
-            "scan_id": scan_id,
-            "findings": findings,
-            "summary": {
-                "total": findings.len(),
-                "critical": summary.critical,
-                "error": summary.error,
-                "warning": summary.warning,
-                "info": summary.info,
-            },
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
+        println!("{}", render_scan_json(scan_id, findings)?);
     } else if findings.is_empty() {
-        if let Some(id) = scan_id {
-            println!("No findings. Scan id: {id}");
-        } else {
-            println!("No findings from opengrep.");
-        }
+        println!("{}", render_empty_scan_text(scan_id));
     } else {
         if let Some(id) = scan_id {
             println!("Scan id: {id}");
@@ -760,6 +744,31 @@ fn emit_scan_output(json: bool, scan_id: Option<i64>, findings: &[Finding]) -> R
         print_findings(findings);
     }
     Ok(())
+}
+
+/// Build the `--json` envelope string for a scan result. Pure for testability.
+fn render_scan_json(scan_id: Option<i64>, findings: &[Finding]) -> Result<String> {
+    let summary = severity_counts(findings);
+    let output = serde_json::json!({
+        "scan_id": scan_id,
+        "findings": findings,
+        "summary": {
+            "total": findings.len(),
+            "critical": summary.critical,
+            "error": summary.error,
+            "warning": summary.warning,
+            "info": summary.info,
+        },
+    });
+    Ok(serde_json::to_string_pretty(&output)?)
+}
+
+/// Format the human-readable line for an empty scan (text mode only).
+fn render_empty_scan_text(scan_id: Option<i64>) -> String {
+    match scan_id {
+        Some(id) => format!("No findings. Scan id: {id}"),
+        None => "No findings from opengrep.".into(),
+    }
 }
 
 struct SeverityCounts {
@@ -1020,5 +1029,56 @@ mod tests {
         cmd_init(path.to_str().unwrap(), true).unwrap();
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.starts_with("# Cartomancer configuration"));
+    }
+
+    #[test]
+    fn render_empty_scan_text_with_id() {
+        assert_eq!(render_empty_scan_text(Some(42)), "No findings. Scan id: 42");
+    }
+
+    #[test]
+    fn render_empty_scan_text_without_id() {
+        assert_eq!(render_empty_scan_text(None), "No findings from opengrep.");
+    }
+
+    #[test]
+    fn render_scan_json_empty() {
+        let out = render_scan_json(Some(7), &[]).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["scan_id"], 7);
+        assert_eq!(v["findings"].as_array().unwrap().len(), 0);
+        assert_eq!(v["summary"]["total"], 0);
+        assert_eq!(v["summary"]["critical"], 0);
+        assert_eq!(v["summary"]["error"], 0);
+        assert_eq!(v["summary"]["warning"], 0);
+        assert_eq!(v["summary"]["info"], 0);
+    }
+
+    #[test]
+    fn render_scan_json_populated() {
+        let findings = vec![
+            make_finding(Severity::Critical),
+            make_finding(Severity::Error),
+            make_finding(Severity::Warning),
+        ];
+        let out = render_scan_json(None, &findings).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["scan_id"].is_null());
+        assert_eq!(v["findings"].as_array().unwrap().len(), 3);
+        assert_eq!(v["summary"]["total"], 3);
+        assert_eq!(v["summary"]["critical"], 1);
+        assert_eq!(v["summary"]["error"], 1);
+        assert_eq!(v["summary"]["warning"], 1);
+        assert_eq!(v["summary"]["info"], 0);
+    }
+
+    #[test]
+    fn emit_scan_output_empty_json_does_not_panic() {
+        // Smoke — stdout capture is not worth the plumbing; the pure render
+        // helpers are covered separately. This exercises the branch wiring.
+        emit_scan_output(true, None, &[]).unwrap();
+        emit_scan_output(true, Some(1), &[]).unwrap();
+        emit_scan_output(false, None, &[]).unwrap();
+        emit_scan_output(false, Some(2), &[]).unwrap();
     }
 }

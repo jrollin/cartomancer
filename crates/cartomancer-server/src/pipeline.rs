@@ -999,7 +999,7 @@ mod tests {
             status: ReviewStatus::Completed,
         };
 
-        persist_scan(
+        let scan_id = persist_scan(
             db_str,
             "owner/repo",
             "main",
@@ -1007,6 +1007,10 @@ mod tests {
             "review",
             Some(42),
             &review,
+        );
+        assert!(
+            scan_id.is_some(),
+            "persist_scan should return scan id on success"
         );
 
         // Verify it was written
@@ -1025,6 +1029,33 @@ mod tests {
         let findings = store.get_findings(scans[0].id.unwrap()).unwrap();
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].rule_id, "test-rule");
+    }
+
+    #[test]
+    fn pipeline_persist_scan_returns_none_on_bad_path() {
+        let review = ReviewResult {
+            pr_number: 0,
+            repo_full_name: "owner/repo".into(),
+            head_sha: "abc".into(),
+            findings: vec![],
+            summary: String::new(),
+            status: ReviewStatus::Completed,
+        };
+        // A path ending in a directory (not a file) — rusqlite cannot open it.
+        let dir = tempfile::tempdir().unwrap();
+        let scan_id = persist_scan(
+            dir.path().to_str().unwrap(),
+            "owner/repo",
+            "main",
+            "abc",
+            "review",
+            None,
+            &review,
+        );
+        assert!(
+            scan_id.is_none(),
+            "persist_scan should return None when store cannot be opened"
+        );
     }
 
     #[test]
