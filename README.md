@@ -12,6 +12,10 @@ A SQL injection in dead code is noise. A SQL injection reachable from 47 callers
 
 Every finding gets enriched with caller count, transitive impact, and domain detection (auth, payment, data). Severity escalates automatically based on structural context — not just the rule that matched.
 
+![cartomancer demo](docs/assets/demo.gif)
+
+_Scan of a 6-file Flask fixture. Findings in `db.py` escalate to **Critical** because they're reachable from the auth and payment flows; the `pickle` warning in the uncalled `utils.py` stays **Warning**. Fixture, config, and tape live in [`examples/demo/`](examples/demo/)._
+
 ## What it does
 
 ```text

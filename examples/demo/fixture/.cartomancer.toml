@@ -1,0 +1,17 @@
+# Demo fixture config. Disables LLM deepening so the scan runs offline.
+
+[opengrep]
+rules = ["auto"]
+timeout_seconds = 60
+
+# Demo runs offline: Ollama points at a dead port, so LLM deepening attempts
+# fail fast (connection refused) and get skipped. Swap in a real URL (or switch
+# to provider = "anthropic" with ANTHROPIC_API_KEY set) to see deepened analysis.
+[llm]
+provider = "ollama"
+ollama_base_url = "http://127.0.0.1:1"
+ollama_model = "none"
+
+[severity]
+blast_radius_threshold = 3
+llm_deepening_threshold = "critical"
