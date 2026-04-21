@@ -8,6 +8,9 @@
 .cartomancer.db-shm
 .cartomancer.db-wal
 
+# Keep the demo fixture's pre-indexed cartog DB so the demo runs offline.
+!examples/demo/fixture/.cartog.db
+
 # Embedding cache
 .fastembed_cache/
 
