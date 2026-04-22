@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Cartomancer — PR reviews that know what your code touches</title>
   <meta name="description" content="Automated PR review: opengrep static analysis + blast radius from cartog + LLM deepening. Know which bugs matter before you merge.">
+
+  <meta property="og:title" content="Cartomancer — PR reviews that know what your code touches">
+  <meta property="og:description" content="Static analysis finds bugs. Blast radius tells you which ones matter. Open source, single binary, self-hosted.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://jrollin.github.io/cartomancer/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Cartomancer — PR reviews that know what your code touches">
+  <meta name="twitter:description" content="Static analysis finds bugs. Blast radius tells you which ones matter. Open source, single binary, self-hosted.">
+
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%23060b18'/%3E%3Ctext x='50' y='68' font-size='60' text-anchor='middle' font-family='monospace' font-weight='bold' fill='%23f59e0b'%3E⌘%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -17,9 +27,10 @@
       <span></span><span></span><span></span>
     </button>
     <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
+      <li><a href="#preview">Output</a></li>
       <li><a href="#pipeline">Pipeline</a></li>
       <li><a href="#compare">Compare</a></li>
+      <li><a href="#faq">FAQ</a></li>
       <li><a href="#install">Install</a></li>
       <li><a href="usage.html">Docs</a></li>
       <li>
@@ -43,8 +54,15 @@
 
     <p class="subtitle">
       A SQL injection in dead code is noise. A SQL injection reachable from 47 callers including your auth endpoint is critical.
-      Cartomancer bridges the gap between "pattern matches" and "this matters."
+      Cartomancer bridges the gap between <em>"pattern matches"</em> and <em>"this matters."</em>
     </p>
+
+    <ul class="hero-bullets">
+      <li><span class="check">&#10003;</span> Open source &middot; MIT</li>
+      <li><span class="check">&#10003;</span> Self-hosted &middot; single binary</li>
+      <li><span class="check">&#10003;</span> Works with any language opengrep supports</li>
+      <li><span class="check">&#10003;</span> Local-first LLM via Ollama (or Claude)</li>
+    </ul>
 
     <div class="hero-installs">
       <div class="install-group-label">Quick Install</div>
@@ -109,19 +127,19 @@
   <div class="container">
     <div class="stat-item">
       <div class="stat-value">3000+</div>
-      <div class="stat-label">opengrep rules</div>
+      <div class="stat-label">built-in opengrep rules</div>
     </div>
     <div class="stat-item">
-      <div class="stat-value">11 stages</div>
-      <div class="stat-label">review pipeline</div>
+      <div class="stat-value">0</div>
+      <div class="stat-label">config required to start</div>
     </div>
     <div class="stat-item">
-      <div class="stat-value">4 crates</div>
-      <div class="stat-label">modular Rust workspace</div>
+      <div class="stat-value">1</div>
+      <div class="stat-label">static binary, no runtime</div>
     </div>
     <div class="stat-item">
-      <div class="stat-value">0 config</div>
-      <div class="stat-label">works out of the box</div>
+      <div class="stat-value">100%</div>
+      <div class="stat-label">self-hostable &middot; air-gap ready</div>
     </div>
   </div>
 </div>
@@ -178,6 +196,83 @@
       </div>
     </div>
 
+  </div>
+</section>
+
+<!-- -- PR Comment preview -------------------------------- -->
+<section id="preview">
+  <div class="container">
+    <div class="section-label">The output</div>
+    <h2 class="section-heading">This is what lands in the PR</h2>
+    <p class="section-subtitle">Cartomancer posts structured, review-quality comments — not a noisy wall of linter output.</p>
+
+    <div class="pr-comment" style="margin-top: 40px;">
+      <div class="pr-comment-header">
+        <div class="pr-avatar">C</div>
+        <div>
+          <strong>cartomancer-bot</strong> <span class="pr-meta">commented on <code>src/api/users.rs</code> &middot; just now</span>
+        </div>
+      </div>
+      <div class="pr-comment-body">
+        <div class="pr-badges">
+          <span class="pr-badge pr-badge-critical">&#9679; Critical</span>
+          <span class="pr-badge pr-badge-neutral">Actionable</span>
+          <span class="pr-badge pr-badge-neutral">sql-injection</span>
+        </div>
+        <p><strong>Unsanitized user input reaches a SQL query.</strong> Escalated from <em>Warning</em> to <em>Critical</em> — this function sits in the <code>auth</code> domain and has <strong>23 callers</strong> including <code>login()</code> and <code>verify_payment()</code>.</p>
+
+        <details open>
+          <summary><strong>Blast radius</strong> &middot; 23 callers across 7 files</summary>
+          <pre class="pr-code">authenticate()  ->  fetch_user()     [this finding]
+login_handler() ->  authenticate()
+oauth_callback() -> authenticate()
+verify_payment() -> authenticate()
+...19 more</pre>
+        </details>
+
+        <details>
+          <summary><strong>Suggested fix</strong> &middot; unified diff</summary>
+          <pre class="pr-code pr-diff"><span class="diff-rm">- let query = format!("SELECT * FROM users WHERE id = {}", user_id);</span>
+<span class="diff-add">+ let query = "SELECT * FROM users WHERE id = $1";
++ let row = sqlx::query(query).bind(user_id).fetch_one(&pool).await?;</span></pre>
+        </details>
+
+        <details>
+          <summary><strong>AI agent prompt</strong> &middot; copy-paste to Claude / Cursor</summary>
+          <pre class="pr-code">In src/api/users.rs line 47, replace string-formatted SQL
+with a parameterized sqlx query. The user_id parameter
+comes from an unauthenticated HTTP handler — treat as
+untrusted. See also callers in auth/login_handler.rs...</pre>
+        </details>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- -- Who is this for ---------------------------------- -->
+<section id="audience">
+  <div class="container">
+    <div class="section-label">Who it's for</div>
+    <h2 class="section-heading">If you've ever said any of these, keep reading</h2>
+
+    <div class="quotes-grid" style="margin-top: 40px;">
+      <blockquote class="quote-card">
+        <p>&ldquo;Our SAST tool floods us with 500 findings per PR and we've learned to ignore it.&rdquo;</p>
+        <cite>Cartomancer ranks by structural impact &mdash; so the top of the list is what actually matters.</cite>
+      </blockquote>
+      <blockquote class="quote-card">
+        <p>&ldquo;CodeRabbit is great but we can't ship our code to a third-party SaaS.&rdquo;</p>
+        <cite>Self-hosted, single binary, air-gap capable with Ollama. Your code never leaves your infra.</cite>
+      </blockquote>
+      <blockquote class="quote-card">
+        <p>&ldquo;Our reviewers keep missing that a change in a utility cascades into the payment flow.&rdquo;</p>
+        <cite>Blast radius from <code>cartog</code> surfaces the callers automatically, inline on the PR.</cite>
+      </blockquote>
+      <blockquote class="quote-card">
+        <p>&ldquo;We have team-specific conventions that no off-the-shelf linter knows about.&rdquo;</p>
+        <cite>Drop YAML rules in <code>.cartomancer/rules/</code> and markdown context in <code>knowledge.md</code> &mdash; the LLM uses both.</cite>
+      </blockquote>
+    </div>
   </div>
 </section>
 
@@ -403,6 +498,56 @@ cartomancer review owner/repo 42 --dry-run</pre>
         <pre>cartomancer serve --port 3000</pre>
         <p>Receives GitHub <code>pull_request</code> events. HMAC-validated, bounded concurrency, graceful shutdown.</p>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- -- FAQ ----------------------------------------------- -->
+<section id="faq">
+  <div class="container">
+    <div class="section-label">FAQ</div>
+    <h2 class="section-heading">Questions you probably have</h2>
+
+    <div class="faq-list" style="margin-top: 32px;">
+      <details class="faq-item">
+        <summary>Is my code sent to a third party?</summary>
+        <p>No &mdash; not unless you explicitly configure the Anthropic provider. The default LLM backend is Ollama running locally. Cartomancer itself is a binary on your box; only GitHub API calls leave the machine (PR metadata + posting comments). Fully air-gap capable.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Which languages are supported?</summary>
+        <p>Static analysis: anything <a href="https://github.com/opengrep/opengrep">opengrep</a> supports (Python, JS/TS, Go, Java, Rust, Ruby, C, C#, PHP, Kotlin, Swift, etc.). Blast radius via <code>cartog</code>: Python, TypeScript/JavaScript, Rust, Go, Ruby, Java. If cartog doesn't know your language yet, you still get static analysis + LLM &mdash; just without the structural escalation layer.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>How is this different from CodeRabbit / Greptile / GitHub Copilot review?</summary>
+        <p>Those are LLM-first: they read your diff and guess at issues. Cartomancer is <em>analysis-first</em>: opengrep's deterministic rules find real patterns, <code>cartog</code>'s call graph measures impact, and the LLM is used surgically to explain and suggest fixes for the findings that already passed the structural bar. Fewer hallucinations, cheaper runs, and you can ship it on your own infra.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Does it work without an LLM?</summary>
+        <p>Yes. LLM deepening is conditional &mdash; you still get the full opengrep scan, cartog enrichment, severity escalation, and GitHub comments without it. Turn it off entirely by setting the deepening threshold above <code>critical</code>.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>What does &ldquo;blast radius&rdquo; actually measure?</summary>
+        <p>The number of transitive callers of the function containing the finding, computed from <code>cartog</code>'s call graph. Combined with domain tags (<code>auth</code>, <code>payment</code>, <code>data</code>) it turns static severity into structural severity: a <em>Warning</em> in a 47-caller auth path becomes <em>Critical</em>; an <em>Error</em> in dead code stays quiet.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>How do I try it on a real PR without posting comments?</summary>
+        <p>Pass <code>--dry-run</code> &mdash; the full pipeline runs and the review is printed to stdout instead of posted. Great for first-time evaluation and CI previews.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>Can I run it in CI instead of as a webhook?</summary>
+        <p>Yes. Invoke <code>cartomancer review &lt;owner/repo&gt; &lt;pr&gt;</code> from GitHub Actions, GitLab CI, or any job runner with access to <code>GITHUB_TOKEN</code>. The webhook server (<code>cartomancer serve</code>) is optional &mdash; use it when you want instant reviews without wiring CI.</p>
+      </details>
+
+      <details class="faq-item">
+        <summary>It's v0.7.x &mdash; is it production ready?</summary>
+        <p>It's a young project, shipping incrementally. The pipeline works end-to-end, has tests, and produces useful reviews today. Expect the CLI surface to stabilize before 1.0. File an issue or PR &mdash; feedback shapes the roadmap.</p>
+      </details>
     </div>
   </div>
 </section>
