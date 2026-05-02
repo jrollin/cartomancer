@@ -249,19 +249,22 @@ checksum = "1e748733b7cbc798e1434b6ac524f0c1ff2ab456fe201501e6497c8417a4fc33"
 
 [[package]]
 name = "cartog"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76828314e76674625140da3a492d2ef05b7a7d19adda4d2ff0f5749dc189ac33"
+checksum = "7257410e016e75c93c35d71cff9aa0abc8a307d904240ca4271d4ed56a2469b9"
 dependencies = [
  "anyhow",
  "cartog-core",
  "cartog-db",
  "cartog-indexer",
  "cartog-languages",
+ "cartog-lsp",
  "cartog-mcp",
  "cartog-rag",
  "cartog-watch",
  "clap",
+ "clap_complete",
+ "clap_mangen",
  "serde",
  "serde_json",
  "tokio",
@@ -272,9 +275,9 @@ dependencies = [
 
 [[package]]
 name = "cartog-core"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3173dfbac90de6ede715d17b3f4d2aaf93e530f225f919d8463dde7191223339"
+checksum = "82554047a77d15eb1443e75db8788b652ccc7ae7ae4f70e114a3328b737b0377"
 dependencies = [
  "anyhow",
  "serde",
@@ -282,28 +285,31 @@ dependencies = [
 
 [[package]]
 name = "cartog-db"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2cf5323ca3353ffd921df6ddf7e4914c0647ac05e982594b25dcd2e779d0fad8"
+checksum = "1f3e49963dbdff76b4c059c23d8d23d7d282501b6a6f35b307013f6a4f4e0280"
 dependencies = [
  "anyhow",
  "cartog-core",
  "rusqlite",
  "serde",
  "sqlite-vec",
+ "thiserror",
  "tracing",
 ]
 
 [[package]]
 name = "cartog-indexer"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a15b285bbf03e7ed31b09c52b24beabdd63650661a1f9da489b863d0c019ac61"
+checksum = "768b9cc68615af4ef5c7de9a20443fd5bbac8cc29f8b02ab486bb247a2ca3c08"
 dependencies = [
  "anyhow",
  "cartog-core",
  "cartog-db",
  "cartog-languages",
+ "cartog-lsp",
+ "rayon",
  "serde",
  "sha2",
  "tracing",
@@ -312,9 +318,9 @@ dependencies = [
 
 [[package]]
 name = "cartog-languages"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30f81a453a76006bb1f40f955070d188c92c272c8b98573357c254a8745a466c"
+checksum = "0f64d62375e874716634289ba5bda6ab1ec29a8b4c235cf9c9d96112b4391335"
 dependencies = [
  "anyhow",
  "cartog-core",
@@ -331,15 +337,31 @@ dependencies = [
 ]
 
 [[package]]
-name = "cartog-mcp"
-version = "0.10.1"
+name = "cartog-lsp"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b1f95f22f12004bf7392eadd9de549adcea6dadd03063ff7baaf9bb2cbb4277f"
+checksum = "c47541f2eb6cedf8bafc0e853f6a546b5eb22fb2c68c7c6a86f8e8bd968614f9"
+dependencies = [
+ "anyhow",
+ "cartog-core",
+ "cartog-db",
+ "serde",
+ "serde_json",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "cartog-mcp"
+version = "0.13.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "232ac352f9b80d9361b617416ddd4b23ced7fe64ea3338e7f47316dccb04b008"
 dependencies = [
  "anyhow",
  "cartog-core",
  "cartog-db",
  "cartog-indexer",
+ "cartog-lsp",
  "cartog-rag",
  "cartog-watch",
  "rmcp",
@@ -351,9 +373,9 @@ dependencies = [
 
 [[package]]
 name = "cartog-rag"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4ba12345b6a0cdf1b928c101d975da740072c688b739f1ff8aca87f30e14140"
+checksum = "b200cb89a9d156430766be6da307abfc8cf64182c4adc48f58a5de5025900dbd"
 dependencies = [
  "anyhow",
  "cartog-core",
@@ -365,9 +387,9 @@ dependencies = [
 
 [[package]]
 name = "cartog-watch"
-version = "0.10.1"
+version = "0.13.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9401809e1a73997bc67e585cc538bf31112fa43f6f796a53aff2ecba0dfa8cd8"
+checksum = "8de99fd250e027ff47071e0df62c2af704d67d867fb5adfea82abb3cbded095d"
 dependencies = [
  "anyhow",
  "cartog-core",
@@ -377,6 +399,8 @@ dependencies = [
  "ctrlc",
  "notify",
  "notify-debouncer-mini",
+ "serde",
+ "serde_json",
  "tracing",
 ]
 
@@ -521,6 +545,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "clap_complete"
+version = "4.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "660c0520455b1013b9bcb0393d5f643d7e4454fb69c915b8d6d2aa0e9a45acc3"
+dependencies = [
+ "clap",
+]
+
+[[package]]
 name = "clap_derive"
 version = "4.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -537,6 +570,16 @@ name = "clap_lex"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+
+[[package]]
+name = "clap_mangen"
+version = "0.2.33"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e30ffc187e2e3aeafcd1c6e2aa416e29739454c0ccaa419226d5ecd181f2d78"
+dependencies = [
+ "clap",
+ "roff",
+]
 
 [[package]]
 name = "colorchoice"
@@ -2301,6 +2344,12 @@ dependencies = [
  "serde_json",
  "syn",
 ]
+
+[[package]]
+name = "roff"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "323c417e1d9665a65b263ec744ba09030cfb277e9daa0b018a4ab62e57bc8189"
 
 [[package]]
 name = "rsqlite-vfs"
