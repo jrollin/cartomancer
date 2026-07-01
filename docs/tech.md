@@ -8,17 +8,17 @@ Rust (single binary, performance, native cartog integration).
 
 | Crate | Version | Purpose |
 |-------|---------|---------|
-| cartog | 0.10 | Code graph: blast radius, callers, impact, AST indexing |
+| cartog | 0.30 | Code graph: blast radius, callers, impact, AST indexing |
 | tokio | 1 | Async runtime (webhook server, subprocess, HTTP) |
 | axum | 0.8 | Webhook HTTP server |
-| reqwest | 0.12 | HTTP client (GitHub API, Ollama, Anthropic) |
+| reqwest | 0.13 | HTTP client (GitHub API, Ollama, Anthropic) |
 | clap | 4 | CLI argument parsing |
-| serde / serde_json / toml | 1 / 1 / 0.8 | Serialization (config TOML, API payloads, opengrep JSON) |
+| serde / serde_json / toml | 1 / 1 / 1 | Serialization (config TOML, API payloads, opengrep JSON) |
 | tracing / tracing-subscriber | 0.1 / 0.3 | Structured logging |
 | anyhow | 1 | Error propagation across the workspace |
 | async-trait | 0.1 | Async trait for LLM provider abstraction |
-| rusqlite | 0.39 | SQLite database access (finding persistence) |
-| sha2 | 0.10 | SHA-256 fingerprint computation for finding identity |
+| rusqlite | 0.40 | SQLite database access (finding persistence) |
+| hmac / sha2 | 0.13 / 0.11 | HMAC webhook signature verification + SHA-256 finding fingerprints |
 
 ## External Tools
 

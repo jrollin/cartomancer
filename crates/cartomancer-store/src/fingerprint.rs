@@ -5,6 +5,17 @@
 //! regression detection (US-5) and dismissal matching (US-6).
 
 use sha2::{Digest, Sha256};
+use std::fmt::Write;
+
+/// Render digest bytes as lowercase hex. sha2 0.11's `finalize()` returns a
+/// `digest::Array` that no longer implements `LowerHex`, so format each byte.
+fn to_hex(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        write!(s, "{b:02x}").expect("writing to String is infallible");
+    }
+    s
+}
 
 /// Compute the finding fingerprint: SHA-256 of length-prefixed `rule_id`, `file_path`, `snippet`.
 ///
@@ -16,14 +27,14 @@ pub fn compute(rule_id: &str, file_path: &str, snippet: &str) -> String {
         hasher.update((component.len() as u64).to_le_bytes());
         hasher.update(component.as_bytes());
     }
-    format!("{:x}", hasher.finalize())
+    to_hex(&hasher.finalize())
 }
 
 /// Compute the snippet-only hash for dismissal exact matching (BR-1).
 pub fn snippet_hash(snippet: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(snippet);
-    format!("{:x}", hasher.finalize())
+    to_hex(&hasher.finalize())
 }
 
 #[cfg(test)]
