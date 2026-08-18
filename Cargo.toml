@@ -47,7 +47,9 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 
 # Code graph
-cartog = "0.30"
+# default-features off: only the local graph DB is used, and the default
+# remote-s3 feature pulls rust-s3 -> quick-xml 0.38 (RUSTSEC-2026-0194/0195)
+cartog = { version = "0.32", default-features = false }
 
 # Async trait
 async-trait = "0.1"
